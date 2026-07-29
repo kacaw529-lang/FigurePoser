@@ -17,11 +17,11 @@ export const PRESETS = {
     armOutL: 7, armOutR: 7, hipOutL: 3, hipOutR: 3
   },
   // 正座：小腿要平貼地面，條件是「膝彎 = 髖屈 + 90」。
-  // 髖 60 / 膝 150 剛好滿足，膝與腳同時著地，臀部落在腳跟上方 1.2 mm。
-  // 舊值（髖 15 / 膝 145）小腿是朝斜上方的，等於跪著把腳抬起來。
+  // 髖 60 / 膝 150 剛好滿足，膝與腳同時著地，臀部落在腳跟上方。
+  // 外展設為 0，兩隻腳跟才會併攏到臀部正下方，把軀幹底面遮住。
   '04 跪坐': {
-    hipPitchL: 60, kneeL: 150, hipOutL: 10,
-    hipPitchR: 60, kneeR: 150, hipOutR: 10,
+    hipPitchL: 60, kneeL: 150, hipOutL: 0,
+    hipPitchR: 60, kneeR: 150, hipOutR: 0,
     armPitchL: 10, armOutL: 8, elbowL: 25,
     armPitchR: 10, armOutR: 8, elbowR: 25
   },

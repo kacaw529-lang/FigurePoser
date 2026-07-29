@@ -101,6 +101,52 @@ console.log('\n【髖球是否始終埋在軀幹內】')
     check(`${name.padEnd(10)} 髖球埋在軀幹內`, out(SK.clonePose(pre)) <= 0);
 }
 
+console.log('\n【軀幹底面是否懸空】')
+{
+  // 軀幹底部殘留的水平平面若朝正下方又沒被腿遮住，在切片軟體裡會變成一塊懸空的平板，
+  // 使用者會誤以為是沒取消掉的底座。跪坐就是最容易踩到的姿勢。
+  const segDist = (p, a, b) => {
+    const ab = [b[0]-a[0], b[1]-a[1], b[2]-a[2]];
+    const ap = [p[0]-a[0], p[1]-a[1], p[2]-a[2]];
+    const t = Math.max(0, Math.min(1, (ap[0]*ab[0]+ap[1]*ab[1]+ap[2]*ab[2]) / (ab[0]**2+ab[1]**2+ab[2]**2)));
+    return Math.hypot(ap[0]-ab[0]*t, ap[1]-ab[1]*t, ap[2]-ab[2]*t);
+  };
+  const exposedMM2 = (pose, radius) => {
+    const rr = radius ?? P.torsoR;
+    const { joints: J } = SK.fk(pose);
+    if (J.Mwaist[2][2] < 0.5) return 0;               // 軀幹沒站直，底面就不是朝下，不算
+    const fx = P.torsoW/2 - rr, fy = P.torsoD/2 - rr;
+    if (fy <= 0) return 0;                             // 圓角吃滿，根本沒有平面
+    const caps = [
+      [J.hipL, J.kneeL, P.legR], [J.kneeL, J.footL, P.legR*P.foreScale],
+      [J.hipR, J.kneeR, P.legR], [J.kneeR, J.footR, P.legR*P.foreScale],
+      [J.shoulderL, J.elbowL, P.armR], [J.elbowL, J.handL, P.armR*P.foreScale],
+      [J.shoulderR, J.elbowR, P.armR], [J.elbowR, J.handR, P.armR*P.foreScale]
+    ];
+    let hit = 0, tot = 0;
+    for (let i = 0; i <= 60; i++) for (let j = 0; j <= 20; j++) {
+      const p = SK.ap(J.Mwaist, [-fx + 2*fx*i/60, -fy + 2*fy*j/20, 0]);
+      tot++;
+      if (caps.some(([a, b, r]) => segDist(p, a, b) <= r)) hit++;
+    }
+    return (1 - hit/tot) * (2*fx*3.1) * (2*fy*3.1);
+  };
+  // 門檻 0.25 mm²：以底面長 3.38 mm 換算，等於寬度不到 0.08 mm 的細條，
+  // 遠低於 0.4 mm 噴頭能表現的最小特徵，實體上不會存在
+  for (const [name, pre] of Object.entries(PRESETS))
+    check(`${name.padEnd(10)} 底面無懸空平板`, exposedMM2(SK.clonePose(pre)) < 0.25,
+          `${exposedMM2(SK.clonePose(pre)).toFixed(3)} mm²`);
+
+  // 用舊圓角重現使用者回報的那塊平板，確認這個偵測真的有效
+  const old04 = SK.clonePose({ hipPitchL: 60, kneeL: 150, hipOutL: 10,
+    hipPitchR: 60, kneeR: 150, hipOutR: 10, armPitchL: 10, armOutL: 8, elbowL: 25,
+    armPitchR: 10, armOutR: 8, elbowR: 25 });
+  check('舊圓角 0.60 時確實偵測得到', exposedMM2(old04, 0.60) > 1.0,
+        `${exposedMM2(old04, 0.60).toFixed(3)} mm²，證明檢查有效`);
+  check('軀幹底部平面已縮到極小', (P.torsoW - 2*P.torsoR) * (P.torsoD - 2*P.torsoR) * 3.1 * 3.1 < 1.2,
+        `${((P.torsoW-2*P.torsoR)*3.1).toFixed(2)} × ${((P.torsoD-2*P.torsoR)*3.1).toFixed(2)} mm`);
+}
+
 console.log('\n【預設動作是否名實相符】')
 {
   const ground = pose => SK.boundingBox(pose).min[2];
