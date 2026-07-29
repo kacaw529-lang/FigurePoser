@@ -15,13 +15,13 @@
   html,body{margin:0}
   body{background:var(--bg);color:var(--ink);
     font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
-    font-size:15px;line-height:1.6;padding:14px;max-width:1400px;margin:0 auto}
+    font-size:15px;line-height:1.6;padding:14px;max-width:1700px;margin:0 auto}
   h1{font-size:20px;margin:0 0 3px}
   .ver{font-size:11.5px;font-weight:400;color:var(--sub);vertical-align:middle;
     border:1px solid var(--line);border-radius:20px;padding:1px 8px;margin-left:4px}
   .lead{color:var(--sub);font-size:13px;margin:0 0 14px}
   .card{background:var(--card);border:1px solid var(--line);border-radius:14px;
-    padding:12px;margin-bottom:12px}
+    padding:11px 12px;margin-bottom:10px}
   .sec{font-size:13px;font-weight:700;color:var(--sub);margin:0 0 8px}
   .row{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 
@@ -30,10 +30,11 @@
   @media(min-width:900px){.panels{grid-template-columns:1fr 1fr 1.35fr}}
   .panel{min-width:0}
   .panel h2{font-size:13px;font-weight:700;color:var(--sub);margin:0 0 5px}
-  canvas.edit{width:100%;height:330px;display:block;background:#fffefc;
+  /* 視圖高度隨視窗調整：參數都改成滑桿之後，垂直空間應該留給圖 */
+  canvas.edit{width:100%;height:clamp(320px, 52vh, 560px);display:block;background:#fffefc;
     border:1px solid var(--line);border-radius:10px;touch-action:none;cursor:grab}
   canvas.edit.dragging{cursor:grabbing}
-  #view3d{width:100%;height:330px;border:1px solid var(--line);border-radius:10px;
+  #view3d{width:100%;height:clamp(320px, 52vh, 560px);border:1px solid var(--line);border-radius:10px;
     overflow:hidden;background:linear-gradient(#fffefc,#f2ece2)}
   #view3d canvas{display:block;border-radius:10px}
   .loadError{display:none;background:#fbeae7;border:1px solid #e8c4bc;color:#a4402f;
@@ -52,13 +53,19 @@
   .primary:hover:not(:disabled){filter:brightness(1.06);background:var(--accent)}
 
   .sl{display:grid;grid-template-columns:76px 1fr 48px;align-items:center;
-    gap:8px;margin-bottom:5px;font-size:13px}
+    gap:8px;margin-bottom:3px;font-size:13px}
+  #sliders{display:grid;grid-template-columns:1fr;gap:0 20px}
+  @media(min-width:760px){#sliders{grid-template-columns:1fr 1fr}}
+  @media(min-width:1200px){#sliders{grid-template-columns:1fr 1fr 1fr}}
   .sl input{width:100%}
   .sl b{text-align:right;font-variant-numeric:tabular-nums;color:var(--sub);font-weight:600}
-  .grid2{display:grid;gap:0 18px;grid-template-columns:1fr}
+  .grid2{display:grid;gap:0 22px;grid-template-columns:1fr}
   @media(min-width:640px){.grid2{grid-template-columns:1fr 1fr}}
+  @media(min-width:1200px){.grid2{grid-template-columns:2.4fr 1fr}}
 
-  .stat{font-size:13px;padding:7px 11px;border-radius:9px;margin-top:8px}
+  .statline{display:flex;flex-wrap:wrap;align-items:center;gap:6px 18px;margin-top:8px}
+  .statline .readout{margin-top:0}
+  .stat{font-size:13px;padding:6px 11px;border-radius:9px;margin-top:0}
   .stat.ok{background:#e9f4ed;color:var(--ok)}
   .stat.bad{background:#fbeae7;color:var(--bad)}
   .readout{display:flex;flex-wrap:wrap;gap:6px 20px;font-size:13px;color:var(--sub);margin-top:8px}
@@ -68,6 +75,9 @@
   label.cb{font-size:13px;display:inline-flex;align-items:center;gap:5px;cursor:pointer}
   select{font:inherit;font-size:13px;padding:5px 8px;border-radius:8px;
     border:1px solid var(--line);background:#fff;color:var(--ink)}
+  .urlbox{flex:1;min-width:0;font:inherit;font-size:11.5px;
+    font-family:ui-monospace,Menlo,Consolas,monospace;padding:6px 9px;
+    border:1px solid var(--line);border-radius:9px;background:#fffefc;color:var(--sub)}
   textarea{width:100%;height:66px;font-family:ui-monospace,Menlo,Consolas,monospace;
     font-size:11.5px;border:1px solid var(--line);border-radius:9px;padding:8px;
     background:#fffefc;color:var(--ink);resize:vertical}
@@ -115,10 +125,12 @@
     <span class="dot" style="background:var(--sub)"></span>頭部
     ・大圓點決定方向，小圓點決定彎曲・叉叉是重心落點
   </div>
-  <div id="stability" class="stat ok">重心穩定，站得住</div>
-  <div class="readout">
-    <span>站姿全高 <b id="sizeStand">—</b></span>
-    <span>目前姿勢外框 <b id="sizeBox">—</b></span>
+  <div class="statline">
+    <div id="stability" class="stat ok">重心穩定，站得住</div>
+    <div class="readout">
+      <span>站姿全高 <b id="sizeStand">—</b></span>
+      <span>目前姿勢外框 <b id="sizeBox">—</b></span>
+    </div>
   </div>
 </div>
 
@@ -136,7 +148,7 @@
       <div class="sec">尺寸</div>
       <div class="sl">
         <span>頭部直徑</span>
-        <input type="range" id="headDia" min="3" max="40" step="0.2" value="6.2">
+        <input type="range" id="headDia" min="4" max="40" step="0.2" value="6.2">
         <b id="headDiaVal">6.2 mm</b>
       </div>
       <div class="sl">
@@ -144,7 +156,7 @@
         <input type="range" id="baseDia" min="0" max="60" step="1" value="0">
         <b id="baseDiaVal">不加</b>
       </div>
-      <p class="note">其餘部位一律依比例連動，站姿全高約為頭部直徑的 4.8 倍。重心不穩時可加底座。</p>
+      <p class="note">其餘部位一律依比例連動，站姿全高約為頭部直徑的 4.9 倍。頭部直徑低於 4 mm 時頸部會細到容易斷，因此下限設在 4 mm。重心不穩時可加底座。</p>
     </div>
   </div>
 </div>
@@ -162,8 +174,16 @@
     </label>
   </div>
   <p class="note" id="exportInfo">模型會自動置中並貼齊列印平台。各部位是重疊的獨立實體，切片軟體會自動聯集，屬正常情形。</p>
+
+  <div class="sec" style="margin-top:14px">分享</div>
+  <div class="row">
+    <input type="text" id="shareUrl" class="urlbox" readonly spellcheck="false">
+    <button id="btnShare">複製連結</button>
+  </div>
+  <p class="note">把連結傳給別人，打開就是同一個姿勢，連頭部直徑與底座設定都一起帶過去。</p>
+
   <details>
-    <summary>姿勢代碼（存檔／分享用）</summary>
+    <summary>姿勢代碼（貼進其他工具用）</summary>
     <textarea id="code" spellcheck="false"></textarea>
     <div class="row" style="margin-top:6px">
       <button id="btnCopy">複製</button>
@@ -209,6 +229,6 @@
   }, 4000);
 })();
 </script>
-<script type="module" src="./src/main.js?v=1.4.0"></script>
+<script type="module" src="./src/main.js?v=1.6.0"></script>
 </body>
 </html>

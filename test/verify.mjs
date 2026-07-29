@@ -9,6 +9,7 @@ globalThis.Blob = globalThis.Blob || Blob
 const SK = await import('../src/skeleton.js')
 const { PRESETS } = await import('../src/presets.js')
 const { exportSTL, segmentsFor } = await import('../src/stl.js')
+const SH = await import('../src/share.js')
 
 let pass = 0, fail = 0
 const check = (name, ok, extra='') => { ok ? pass++ : fail++; console.log(`${ok?'✓':'✗'} ${name}${extra?'  '+extra:''}`) }
@@ -42,7 +43,7 @@ console.log('\n【前後方向】')
   const head = SK.clonePose(null); head.headPitch = 25;
   check('頭・低頭為正時頭確實往前低', SK.fk(head).joints.head[1] > 0.3, `頭 y=${SK.fk(head).joints.head[1].toFixed(2)}`)
 
-  const want = { '05 蜷曲趴伏': 'down', '06 仰躺': 'up', '08 大字型': 'up' };
+  const want = { '05 趴伏': 'down', '06 仰躺': 'up', '08 大字型': 'up' };
   for (const [name, dir] of Object.entries(want)) {
     const f = facing(SK.clonePose(PRESETS[name]))[2];
     check(`${name} 臉朝${dir === 'down' ? '下' : '上'}`,
@@ -138,7 +139,7 @@ console.log('\n【預設動作是否名實相符】')
 
   // 05：趴伏要壓低，臀部不能翹得比頭高太多
   {
-    const pose = SK.clonePose(PRESETS['05 蜷曲趴伏']);
+    const pose = SK.clonePose(PRESETS['05 趴伏']);
     const { joints: J } = SK.fk(pose), g = ground(pose);
     const hip = (J.pelvis[2] - g) * 3.1, h = SK.boundingBox(pose).size[2] * 3.1;
     check('05 姿態夠低伏', h < 13 && hip < 6, `總高 ${h.toFixed(1)} mm、臀高 ${hip.toFixed(1)} mm`);
@@ -216,6 +217,36 @@ console.log('\n【底座】')
   check('底座三角面有被加進去', withBase.triangles > noBase.triangles)
 }
 
+console.log('\n【分享連結】')
+{
+  for (const [name, pre] of Object.entries(PRESETS)) {
+    const st = { pose: SK.clonePose(pre), headDiameter: 6.2, baseDiameter: 0 }
+    const dec = SH.decodeState('#' + SH.encodeState(st))
+    const same = dec && SK.KEYS.every(k => Math.round(st.pose[k]) === dec.pose[k])
+    check(`${name.padEnd(10)} 連結往返一致`, same)
+  }
+  {
+    const st = { pose: SK.clonePose(PRESETS['07 側躺']), headDiameter: 18.4, baseDiameter: 25 }
+    const dec = SH.decodeState('#' + SH.encodeState(st))
+    check('尺寸與底座一併帶過去', dec.headDiameter === 18.4 && dec.baseDiameter === 25,
+          `頭 ${dec.headDiameter}、底座 ${dec.baseDiameter}`)
+    check('網址長度合理', SH.encodeState(st).length < 90, `${SH.encodeState(st).length} 字元`)
+  }
+  const bad = ['', '#', '#p=1,2,3', '#h=6', '#p=a,b,c', '#p=' + Array(19).fill(0).join(','), null]
+  check('壞掉的網址一律安全忽略', bad.every(h => SH.decodeState(h) === null))
+  {
+    const zeros = '#p=' + Array(SK.KEYS.length).fill(0).join(',')
+    check('頭部直徑受下限保護', SH.decodeState(zeros + '&h=1').headDiameter === SH.HEAD_MIN,
+          `輸入 1 → ${SH.decodeState(zeros + '&h=1').headDiameter}`)
+    check('頭部直徑受上限保護', SH.decodeState(zeros + '&h=999').headDiameter === SH.HEAD_MAX)
+    const wild = '#p=' + SK.KEYS.map(k => k === 'hipPitchL' ? -999 : 0).join(',')
+    check('超範圍角度會被收束', SH.decodeState(wild).pose.hipPitchL === SK.LIMITS.hipPitch[0],
+          `−999 → ${SH.decodeState(wild).pose.hipPitchL}`)
+  }
+  const html = fs.readFileSync('index.html', 'utf8')
+  check('滑桿下限已改為 4 mm', /id="headDia"[^>]*min="4"/.test(html))
+}
+
 console.log('\n【UI 串接】')
 {
   const dom = new JSDOM(fs.readFileSync('index.html','utf8'), { pretendToBeVisual:true })
@@ -223,7 +254,7 @@ console.log('\n【UI 串接】')
   global.window=window; global.document=window.document
   Object.defineProperty(global,'navigator',{value:window.navigator,configurable:true})
   global.requestAnimationFrame=()=>0; window.devicePixelRatio=1
-  const c2d = new Proxy({}, { get:(t,k)=> k==='canvas'?{}:()=>{} })
+  var c2d = new Proxy({}, { get:(t,k)=> k==='canvas'?{}:()=>{} })
   window.HTMLCanvasElement.prototype.getContext = t => t==='2d'?c2d:null
   window.Element.prototype.getBoundingClientRect = () => ({width:400,height:330,left:0,top:0})
   window.HTMLCanvasElement.prototype.setPointerCapture = ()=>{}
@@ -244,7 +275,8 @@ console.log('\n【UI 串接】')
   const pe=(t,x,y)=>{const e=new window.Event(t,{bubbles:true});Object.assign(e,{clientX:x,clientY:y,pointerId:1,preventDefault(){}});return e}
   ;[...$('presetRow').children].find(b=>b.dataset.name.startsWith('03')).click()
   // 由實際關節位置換算控制點的螢幕座標，體型比例改變時測試才不會失效
-  const SC = Math.min(400/11.0, 330/11.6), CX = 200, CY = 330*0.60
+  const { FRAME } = await import('../src/editor2d.js')
+  const SC = Math.min(400/FRAME.wDiv, 330/FRAME.hDiv), CX = 200, CY = 330*FRAME.cyRatio
   const toS = p => [CX + (-p[0])*SC, CY - p[2]*SC]
   const elbow = toS(SK.fk(SK.clonePose(PRESETS['03 直立'])).joints.elbowL)
   cv.dispatchEvent(pe('pointerdown', elbow[0], elbow[1]))
@@ -262,6 +294,29 @@ console.log('\n【UI 串接】')
   cvS.dispatchEvent(pe('pointerup',0,0))
   const hp = JSON.parse($('code').value).hipPitchL
   check('拖曳時髖後擺受限制', hp >= SK.LIMITS.hipPitch[0], `hipPitchL=${hp}，下限 ${SK.LIMITS.hipPitch[0]}`)
+  check('分享連結欄位有填入', /#p=/.test($('shareUrl').value), $('shareUrl').value.slice(-40))
+}
+
+console.log('\n【從網址載入】')
+{
+  // 換一份乾淨的 document，網址先帶好 hash，確認 main.js 啟動時會採用
+  const target = SK.clonePose(PRESETS['08 大字型'])
+  const hash = '#' + SH.encodeState({ pose: target, headDiameter: 11.4, baseDiameter: 0 })
+  const dom2 = new JSDOM(fs.readFileSync('index.html', 'utf8'),
+    { pretendToBeVisual: true, url: 'https://example.org/app/' + hash })
+  const w2 = dom2.window
+  global.window = w2; global.document = w2.document
+  Object.defineProperty(global, 'navigator', { value: w2.navigator, configurable: true })
+  w2.devicePixelRatio = 1
+  w2.HTMLCanvasElement.prototype.getContext = t => t === '2d' ? c2d : null
+  w2.Element.prototype.getBoundingClientRect = () => ({ width: 400, height: 330, left: 0, top: 0 })
+  w2.HTMLCanvasElement.prototype.setPointerCapture = () => {}
+  await import('../src/main.js?reload=' + Date.now())
+  const $$ = id => w2.document.getElementById(id)
+  const loaded = JSON.parse($$('code').value)
+  check('網址中的姿勢有被套用', SK.KEYS.every(k => Math.round(target[k]) === loaded[k]))
+  check('網址中的尺寸有被套用', $$('headDiaVal').textContent === '11.4 mm', $$('headDiaVal').textContent)
+  check('從網址載入時不高亮預設', ![...$$('presetRow').children].some(b => b.classList.contains('on')))
 }
 
 console.log(`\n通過 ${pass} 項，失敗 ${fail} 項`)

@@ -6,13 +6,14 @@ import { PRESETS, DEFAULT_PRESET } from './presets.js';
 import { Editor2D } from './editor2d.js';
 import { Viewer3D } from './viewer3d.js';
 import { exportSTL, download } from './stl.js';
+import { encodeState, decodeState, shareURL, HEAD_MIN, HEAD_MAX } from './share.js';
 
 /**
  * 版本編號會顯示在標題旁邊。
  * 更新網站後若看不出變化，先確認這裡的號碼有沒有跟著變——
  * GitHub Pages 對 JS 檔會快取十分鐘，多半是瀏覽器還在用舊檔，按 Ctrl+Shift+R 即可。
  */
-const VERSION = 'v1.4.0';
+const VERSION = 'v1.6.0';
 
 const $ = id => document.getElementById(id);
 $('ver').textContent = VERSION;
@@ -25,6 +26,13 @@ const state = {
   presetName: DEFAULT_PRESET
 };
 const headRadius = () => state.headDiameter / 2;
+
+// 網址帶了姿勢就以它為準，否則用預設動作
+const fromURL = decodeState(window.location.hash);
+if (fromURL) {
+  Object.assign(state, fromURL);
+  state.presetName = null;
+}
 
 // ── 建立元件 ─────────────────────────────────────────────
 // 拖曳過的姿勢就不再屬於任何預設動作，取消高亮並改用 custom 檔名
@@ -105,7 +113,7 @@ function syncSliders() {
 
 // ── 尺寸與底座 ───────────────────────────────────────────
 $('headDia').addEventListener('input', e => {
-  state.headDiameter = +e.target.value;
+  state.headDiameter = Math.max(HEAD_MIN, Math.min(HEAD_MAX, +e.target.value));
   $('headDiaVal').textContent = state.headDiameter.toFixed(1) + ' mm';
   viewer?.setBase(state.baseDiameter);
   refresh(true);
@@ -127,6 +135,44 @@ $('btnReset').onclick = () => {
   state.pose = clonePose(null);
   state.presetName = null; markPreset(null);
   refresh(true);
+};
+
+// ── 分享連結 ─────────────────────────────────────────────
+// 網址每次拖曳都改寫的話，瀏覽器會限流（Safari 約 30 秒 100 次），
+// 所以畫面上的連結即時更新，真正寫回網址列則延遲到停手之後。
+let hashTimer = null;
+let lastHash = '';
+function scheduleHashWrite() {
+  clearTimeout(hashTimer);
+  hashTimer = setTimeout(() => {
+    const h = '#' + encodeState(state);
+    if (h === lastHash) return;
+    lastHash = h;
+    try { window.history.replaceState(null, '', h); } catch (_) { /* file:// 下會擋，忽略 */ }
+  }, 250);
+}
+
+window.addEventListener('hashchange', () => {
+  if (window.location.hash === lastHash) return;     // 自己寫回去的，不用理
+  const s = decodeState(window.location.hash);
+  if (!s) return;
+  Object.assign(state, s);
+  state.presetName = null;
+  markPreset(null);
+  $('headDia').value = state.headDiameter;
+  $('baseDia').value = state.baseDiameter;
+  $('headDiaVal').textContent = state.headDiameter.toFixed(1) + ' mm';
+  $('baseDiaVal').textContent = state.baseDiameter ? state.baseDiameter + ' mm' : '不加';
+  viewer?.setBase(state.baseDiameter);
+  refresh(true);
+});
+
+$('btnShare').onclick = async () => {
+  const b = $('btnShare');
+  const url = $('shareUrl');
+  try { await navigator.clipboard.writeText(url.value); }
+  catch (_) { url.select(); document.execCommand('copy'); }
+  flash(b, '已複製 ✓', '複製連結');
 };
 
 // ── 姿勢代碼 ─────────────────────────────────────────────
@@ -200,6 +246,8 @@ function refresh(reframe = false) {
 
   clampPose(state.pose);
   $('code').value = JSON.stringify(state.pose);
+  $('shareUrl').value = shareURL(state, window.location);
+  scheduleHashWrite();
   syncSliders();
 
   const sx = Math.max(bb.size[0] * hr, state.baseDiameter);
@@ -224,7 +272,7 @@ window.addEventListener('resize', layout);
 
 $('headDiaVal').textContent = state.headDiameter.toFixed(1) + ' mm';
 $('headDia').value = state.headDiameter;
-markPreset(DEFAULT_PRESET);
+markPreset(state.presetName);
 layout();
 viewer?.frame(headRadius());
 

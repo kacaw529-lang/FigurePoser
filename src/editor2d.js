@@ -12,6 +12,12 @@ import {
   sub, clamp, ap, P, LR_KEYS, LIMITS
 } from './skeleton.js';
 
+/**
+ * 取景參數。刻意固定不隨姿勢變動，換動作時畫面才不會忽大忽小；
+ * 分母是「以頭半徑為單位的可視範圍」，最寬的大字型約佔 10.2，留一點邊。
+ */
+export const FRAME = { wDiv: 10.8, hDiv: 11.2, cyRatio: 0.60 };
+
 const HANDLES = [
   { key: 'elbowL', side: 'L', type: 'arm2' }, { key: 'handL', side: 'L', type: 'arm1' },
   { key: 'elbowR', side: 'R', type: 'arm2' }, { key: 'handR', side: 'R', type: 'arm1' },
@@ -58,10 +64,9 @@ export class Editor2D {
       v.cv.height = Math.round(r.height * dpr);
       v.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       v.w = r.width; v.h = r.height;
-      // 固定取景，避免換姿勢時畫面忽大忽小
-      v.scale = Math.min(v.w / 11.0, v.h / 11.6);
+      v.scale = Math.min(v.w / FRAME.wDiv, v.h / FRAME.hDiv);
       v.cx = v.w / 2;
-      v.cy = v.h * 0.60;
+      v.cy = v.h * FRAME.cyRatio;
     }
   }
 
