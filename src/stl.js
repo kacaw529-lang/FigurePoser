@@ -11,17 +11,18 @@
  * 會自動把重疊實體聯集，結果與真聯集相同。
  */
 import * as THREE from 'three';
-import { buildGeometries, disposeGeometries, buildFigure, applyPose, makeBase } from './meshes.js';
+import { buildGeometries, disposeGeometries, buildFigure, applyPose, makeBaseMM, BASE_THICKNESS } from './meshes.js';
 import { fk } from './skeleton.js';
 
 /**
- * 依「弦高誤差」決定圓周分段數。
+ * 依「弦高誤差」決定圓周分段數，並套一個下限。
  * 半徑 r 的圓分成 n 段時，弦與弧的最大偏差約 r·(1−cos(π/n))。
- * 這樣小模型不會產生沒有意義的巨大檔案，大模型也不會出現稜角。
+ * 只看誤差的話，小模型會算出很少的段數（3 mm 的頭在 0.05 mm 誤差下只有 18 段），
+ * 幾何上夠精確，但肉眼與切片軟體的平面著色都看得出稜角，所以另外加下限。
  */
-export function segmentsFor(radiusMM, toleranceMM) {
+export function segmentsFor(radiusMM, toleranceMM, floor = 24) {
   const n = Math.PI / Math.acos(Math.max(-1, 1 - toleranceMM / Math.max(radiusMM, 1e-6)));
-  return Math.max(12, Math.min(128, Math.ceil(n / 2) * 2));
+  return Math.max(floor, Math.min(160, Math.ceil(n / 2) * 2));
 }
 
 /** 把場景裡所有網格攤平成世界座標的三角形陣列，同時濾掉退化面 */
@@ -66,7 +67,19 @@ function collectTriangles(root) {
   return { tris, min, max, count: tris.length / 12, skipped };
 }
 
-/** 寫成二進位 STL，寫入時套用位移把模型置中並貼齊列印平台 */
+/** 把位移直接套用到頂點上（底座之後要以最終座標接上去，不能再共用一個位移） */
+function shift(tris, count, off) {
+  for (let t = 0; t < count; t++) {
+    const p = t * 12;
+    for (let v = 0; v < 3; v++) {
+      tris[p + 3 + v * 3] += off[0];
+      tris[p + 4 + v * 3] += off[1];
+      tris[p + 5 + v * 3] += off[2];
+    }
+  }
+}
+
+/** 寫成二進位 STL */
 function writeBinarySTL(tris, count, offset) {
   const buf = new ArrayBuffer(84 + count * 50);
   const dv = new DataView(buf);
@@ -96,13 +109,12 @@ function writeBinarySTL(tris, count, offset) {
 /**
  * @param {object} pose
  * @param {number} headRadiusMM 頭半徑（mm）
- * @param {object} opts { tolerance, segments, baseDiameter, baseThickness }
+ * @param {object} opts { tolerance, segments, baseDiameter }
  * @returns {{blob:Blob, size:object, triangles:number, segments:number, bytes:number}}
  */
 export function exportSTL(pose, headRadiusMM, opts = {}) {
-  const segments     = opts.segments ?? segmentsFor(headRadiusMM, opts.tolerance ?? 0.05);
+  const segments     = opts.segments ?? segmentsFor(headRadiusMM, opts.tolerance ?? 0.05, opts.floor ?? 40);
   const baseDiameter = opts.baseDiameter ?? 0;
-  const baseThickness = opts.baseThickness ?? 1.2;
 
   const mat = new THREE.MeshBasicMaterial();
   const geos = buildGeometries(segments);
@@ -113,32 +125,42 @@ export function exportSTL(pose, headRadiusMM, opts = {}) {
   root.add(group);
   root.scale.setScalar(headRadiusMM);
 
-  let base = null;
+  // 先只收人偶本體，算出置中與落地的位移並直接套用到頂點
+  const fig = collectTriangles(root);
+  const offset = [
+    -(fig.min[0] + fig.max[0]) / 2,
+    -(fig.min[1] + fig.max[1]) / 2,
+    -fig.min[2]
+  ];
+  shift(fig.tris, fig.count, offset);
+
+  const size = {
+    x: fig.max[0] - fig.min[0],
+    y: fig.max[1] - fig.min[1],
+    z: fig.max[2] - fig.min[2]
+  };
+
+  // 底座在人偶落地之後才加，位置就是列印平台 z = 0，
+  // 人偶最低處也在 z = 0，兩者自然重疊成一體
+  let tris = fig.tris, count = fig.count;
   if (baseDiameter > 0) {
-    base = makeBase(baseDiameter / headRadiusMM, baseThickness / headRadiusMM, mat, 96);
-    base.matrixAutoUpdate = true;
-    root.add(base);
+    const baseRoot = new THREE.Group();
+    baseRoot.add(new THREE.Mesh(makeBaseMM(baseDiameter, 96), mat));
+    const b = collectTriangles(baseRoot);
+    tris = fig.tris.concat(b.tris);
+    count = fig.count + b.count;
+    size.x = Math.max(size.x, baseDiameter);
+    size.y = Math.max(size.y, baseDiameter);
+    size.z = Math.max(size.z, BASE_THICKNESS);
+    baseRoot.children[0].geometry.dispose();
   }
 
-  const { tris, min, max, count, skipped } = collectTriangles(root);
-
-  // 置中並落到 Z = 0，切片軟體開啟時就位在列印平台上
-  const offset = [-(min[0] + max[0]) / 2, -(min[1] + max[1]) / 2, -min[2]];
-  const buf = writeBinarySTL(tris, count, offset);
-  const blob = new Blob([buf], { type: 'model/stl' });
+  const blob = new Blob([writeBinarySTL(tris, count, [0, 0, 0])], { type: 'model/stl' });
 
   disposeGeometries(geos);
-  if (base) base.geometry.dispose();
   mat.dispose();
 
-  return {
-    blob,
-    size: { x: max[0] - min[0], y: max[1] - min[1], z: max[2] - min[2] },
-    triangles: count,
-    skipped,
-    segments,
-    bytes: blob.size
-  };
+  return { blob, size, triangles: count, skipped: fig.skipped, segments, bytes: blob.size };
 }
 
 export function download(blob, filename) {

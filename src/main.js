@@ -12,7 +12,7 @@ import { exportSTL, download } from './stl.js';
  * 更新網站後若看不出變化，先確認這裡的號碼有沒有跟著變——
  * GitHub Pages 對 JS 檔會快取十分鐘，多半是瀏覽器還在用舊檔，按 Ctrl+Shift+R 即可。
  */
-const VERSION = 'v1.2.0';
+const VERSION = 'v1.3.0';
 
 const $ = id => document.getElementById(id);
 $('ver').textContent = VERSION;
@@ -107,13 +107,13 @@ function syncSliders() {
 $('headDia').addEventListener('input', e => {
   state.headDiameter = +e.target.value;
   $('headDiaVal').textContent = state.headDiameter.toFixed(1) + ' mm';
-  viewer?.setBase(state.baseDiameter, headRadius());
+  viewer?.setBase(state.baseDiameter);
   refresh(true);
 });
 $('baseDia').addEventListener('input', e => {
   state.baseDiameter = +e.target.value;
   $('baseDiaVal').textContent = state.baseDiameter ? state.baseDiameter + ' mm' : '不加';
-  viewer?.setBase(state.baseDiameter, headRadius());
+  viewer?.setBase(state.baseDiameter);
   refresh();
 });
 
@@ -161,8 +161,10 @@ $('btnExport').onclick = () => {
   // 讓瀏覽器先把「產生中」畫出來再開始運算
   setTimeout(() => {
     try {
+      const q = $('quality').selectedOptions[0];
       const r = exportSTL(state.pose, headRadius(), {
-        tolerance: +$('quality').value,
+        tolerance: +q.value,
+        floor: +q.dataset.floor,
         baseDiameter: state.baseDiameter
       });
       const tag = (state.presetName || 'custom').replace(/[^\w\u4e00-\u9fa5]+/g, '');

@@ -155,9 +155,9 @@
     <button class="primary" id="btnExport">匯出 STL</button>
     <label class="cb">品質
       <select id="quality" title="容許的表面誤差，分段數會依模型大小自動調整">
-        <option value="0.1">一般（誤差 0.1 mm）</option>
-        <option value="0.05" selected>精細（誤差 0.05 mm）</option>
-        <option value="0.02">最高（誤差 0.02 mm）</option>
+        <option value="0.1" data-floor="24">一般</option>
+        <option value="0.05" data-floor="40" selected>精細</option>
+        <option value="0.02" data-floor="64">最高</option>
       </select>
     </label>
   </div>
@@ -209,6 +209,6 @@
   }, 4000);
 })();
 </script>
-<script type="module" src="./src/main.js?v=1.2.0"></script>
+<script type="module" src="./src/main.js?v=1.3.0"></script>
 </body>
 </html>

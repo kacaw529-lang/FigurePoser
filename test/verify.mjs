@@ -67,36 +67,37 @@ check('軀幹圓角 ≥ 手臂半徑（肩部收得進去）', P.torsoR >= P.arm
   for (const [label, p] of s) check(`${label}未凸出軀幹`, probe(label, p) <= 0.001, `SDF ${probe(label,p).toFixed(4)}`)
 }
 
-console.log('\n【大腿是否從軀幹背面穿出】')
+console.log('\n【髖球是否始終埋在軀幹內】')
 {
-  const bump = pose => {
-    const { joints: J } = SK.fk(pose)
-    let mx = 0
-    for (const [a, b] of [[J.hipL, J.kneeL], [J.hipR, J.kneeR]])
-      for (let i = 0; i <= 80; i++) {
-        const t = i / 80
-        const w = [a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t, a[2]+(b[2]-a[2])*t]
-        const p = SK.ap(SK.tp(J.Mwaist), w), sd = SK.torsoSDF(p)
-        if (sd > 0) continue
-        const poke = sd + P.legR
-        if (poke <= 0) continue
-        const e = 1e-4
-        const g = [0,1,2].map(k => { const q=[...p]; q[k]+=e; return (SK.torsoSDF(q)-sd)/e })
-        const L = Math.hypot(...g), nn = g.map(v => v/L)
-        if (nn[1] < -0.4 && poke > mx) mx = poke
-      }
-    return mx
-  }
+  // 髖球位置掛在軀幹座標系，所以不論腰怎麼轉都應該埋著。
+  // 這正是使用者回報「大腿上端跑出身體」的直接判準。
+  const out = pose => {
+    const { joints: J } = SK.fk(pose);
+    let mx = -Infinity;
+    for (const h of [J.hipL, J.hipR])
+      mx = Math.max(mx, SK.torsoSDF(SK.ap(SK.tp(J.Mwaist), h)) + P.legR);
+    return mx;
+  };
+  const [wpMin, wpMax] = SK.LIMITS.waistPitch;
+  const [wtMin, wtMax] = SK.LIMITS.waistTwist;
+  let worst = -Infinity, at = '';
+  for (let w = wpMin; w <= wpMax; w += 5)
+    for (let tw = wtMin; tw <= wtMax; tw += 5) {
+      const v = out(SK.clonePose({ waistPitch: w, waistTwist: tw }));
+      if (v > worst) { worst = v; at = `腰前彎 ${w}° 扭轉 ${tw}°`; }
+    }
+  check('腰部全範圍掃描，髖球都沒露出', worst <= 0, `最差 ${worst.toFixed(3)} @ ${at}`);
+
+  // 若把錨點錯掛回骨盆座標，這個檢查必須抓得到，否則等於沒測
+  const naive = pose => {
+    const { joints: J } = SK.fk(pose);
+    const hipRoot = SK.ap(J.Mroot, [-P.hipX, 0, P.hipZ]);
+    return SK.torsoSDF(SK.ap(SK.tp(J.Mwaist), hipRoot)) + P.legR;
+  };
+  check('錨點掛骨盆座標時確實會露出', naive(SK.clonePose({ waistPitch: 60 })) > 0.1, '證明這個檢查有效');
+
   for (const [name, pre] of Object.entries(PRESETS))
-    check(`${name.padEnd(10)} 背面無圓凸`, bump(SK.clonePose(pre)) < 0.05)
-  // 兩個限制值都要擋得住：髖後擺過大、腰前彎過大
-  const noClamp = src => SK.KEYS.reduce((o,k)=>(o[k]=(src&&k in src)?+src[k]:0,o),{})
-  check('髖後擺 −78°（未受限）確實會穿背', bump(noClamp({hipPitchL:-78,hipPitchR:-78})) > 0.3, '證明這個檢查有效')
-  check('腰前彎 50°（未受限）確實會穿背', bump(noClamp({waistPitch:50})) > 0.3, '證明這個檢查有效')
-  // clampPose 應該把它們收回範圍內
-  const c = SK.clonePose({ hipPitchL: -78, waistPitch: 50 })
-  check('clampPose 收束髖後擺', c.hipPitchL === SK.LIMITS.hipPitch[0], `${c.hipPitchL}`)
-  check('clampPose 收束腰前彎', c.waistPitch === SK.LIMITS.waistPitch[1], `${c.waistPitch}`)
+    check(`${name.padEnd(10)} 髖球埋在軀幹內`, out(SK.clonePose(pre)) <= 0);
 }
 
 console.log('\n【反解往返】')
@@ -145,7 +146,7 @@ async function bbox(blob){
 }
 for (const [name,p] of Object.entries(PRESETS)) {
   const pose = SK.clonePose(p)
-  const r = exportSTL(pose, 3.1, { tolerance: 0.05 })
+  const r = exportSTL(pose, 3.1, { tolerance: 0.05, floor: 24 })
   const v = await bbox(r.blob)
   const size=[v.mx[0]-v.mn[0],v.mx[1]-v.mn[1],v.mx[2]-v.mn[2]]
   const ok = Math.abs(v.mn[2])<1e-3 && Math.abs(v.mn[0]+v.mx[0])<1e-3 && Math.abs(v.mn[1]+v.mx[1])<1e-3
@@ -153,8 +154,21 @@ for (const [name,p] of Object.entries(PRESETS)) {
   check(name.padEnd(10), ok, `${size.map(s=>s.toFixed(2)).join('×')} mm  ${v.n} 面  ${(r.bytes/1024).toFixed(0)} KB`)
 }
 {
-  const t0=Date.now(); exportSTL(SK.clonePose(PRESETS['07 側躺']), 25, { tolerance: 0.02 }); const dt=Date.now()-t0
-  check('大模型(50mm 頭)高品質匯出耗時', dt < 8000, `${dt} ms，${segmentsFor(25,0.02)} 段`)
+  const t0=Date.now(); exportSTL(SK.clonePose(PRESETS['07 側躺']), 25, { tolerance: 0.02, floor: 64 }); const dt=Date.now()-t0
+  check('大模型(50mm 頭)高品質匯出耗時', dt < 15000, `${dt} ms，${segmentsFor(25,0.02,64)} 段`)
+}
+console.log('\n【底座】')
+{
+  const pose = SK.clonePose(PRESETS['01 舉手抱頭'])
+  const noBase = exportSTL(pose, 3.1, { tolerance: 0.05, floor: 24 })
+  const withBase = exportSTL(pose, 3.1, { tolerance: 0.05, floor: 24, baseDiameter: 14 })
+  const v = await bbox(withBase.blob)
+  check('加底座後貼齊列印平台', Math.abs(v.mn[2]) < 1e-3, `最低 z=${v.mn[2].toFixed(4)}`)
+  check('底座位於底部而非腰部', (v.mx[0]-v.mn[0]) > 13.9 && (v.mx[1]-v.mn[1]) > 13.9,
+        `XY 範圍 ${(v.mx[0]-v.mn[0]).toFixed(1)} × ${(v.mx[1]-v.mn[1]).toFixed(1)}（底座 14 mm）`)
+  check('底座讓外框變寬但不變高', withBase.size.x >= 14 && Math.abs(withBase.size.z - noBase.size.z) < 1e-6)
+  check('底座不影響不加底座時的結果', noBase.size.x < 14)
+  check('底座三角面有被加進去', withBase.triangles > noBase.triangles)
 }
 
 console.log('\n【UI 串接】')

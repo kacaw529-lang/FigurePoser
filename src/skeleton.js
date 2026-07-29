@@ -61,23 +61,22 @@ P.shoulderX  = P.torsoW / 2 - P.armR * 0.55;     // 仍略微凸出體側，手�
 P.shoulderZ  = surfZ(P.shoulderX, 0, true) - P.armR - CLEAR;
 P.hipX       = P.torsoW / 2 - P.legR * 1.15;
 P.hipZ       = surfZ(P.hipX, 0, false) + P.legR + CLEAR;
-// 頭：無脖子，直接埋入軀幹；樞紐放得夠深，傾斜到極限仍不會脫離
+// 頭：無脖子，直接埋入軀幹；樞紐放得夠深，傾斜到極限仍不會脫離。
+// headDist 決定埋入多少：1.35 時交界圓約為頭直徑的 53%，
+// 看起來是頭「坐」在肩上而不是陷進去，傾斜 30° 時頸部仍有約 4 mm（30 mm 成品）。
 P.headPivotZ = P.torsoH - 0.50;
-P.headDist   = 1.22;
+P.headDist   = 1.35;
 export const HEAD_TILT_MAX = 30;
 
 /**
- * 關節活動範圍。有兩個刻意收緊的地方：
- *
- * hipPitch 下限 −40°：人體髖伸展本來就只有 20~30 度，再大會讓大腿從軀幹背面穿出。
- *
- * waistPitch 上限 +20°：腰往前彎會把軀幹下半部轉到大腿上方，兩者互相穿插，
- * 背面就冒出一塊圓凸。實測凸起量幾乎只由這個角度決定（10° 以內為 0、
- * 20° 約 0.35 mm、40° 約 1.0 mm，以 30 mm 成品計）。往後仰則完全沒有這個問題。
+ * 關節活動範圍，依人體實際可動範圍設定。
+ * hipPitch 下限 −40°：人體髖伸展本來就只有 20~30 度。
+ * 早期版本曾因為髖球會被腰部旋轉轉出軀幹，而把腰的範圍壓得很窄；
+ * 髖錨點改掛軀幹座標系之後那個問題已消失，範圍就放回正常值。
  */
 export const LIMITS = {
   rootPitch:  [-180, 180], rootRoll:  [-180, 180],
-  waistPitch: [-45, 20],   waistTwist: [-50, 50],
+  waistPitch: [-35, 70],   waistTwist: [-60, 60],
   headPitch:  [-HEAD_TILT_MAX, HEAD_TILT_MAX],
   headRoll:   [-HEAD_TILT_MAX, HEAD_TILT_MAX],
   armPitch: [-180, 180], armOut: [-25, 120], armTwist: [-180, 180], elbow: [0, 150],
@@ -161,7 +160,11 @@ export function fk(pose) {
     const Mfo = mul(Mup, Rx(pose['elbow' + s] * D));
     const hd  = add(el, ap(Mfo, [0, 0, -P.loArm]));
 
-    const hp  = ap(Mroot, [sx * P.hipX, 0, P.hipZ]);
+    // 髖關節「位置」掛在軀幹座標系（Mwaist），而不是骨盆座標（Mroot）。
+    // 髖球是埋在軀幹裡的，若位置固定在骨盆而軀幹隨腰旋轉，
+    // 軀幹就會從球上轉開，把球露在體外——這正是大腿上端跑出身體的原因。
+    // 但大腿的「方向」仍以骨盆為基準，所以彎腰不會連帶把腿甩動。
+    const hp  = ap(Mwaist, [sx * P.hipX, 0, P.hipZ]);
     const Mth = mul(Mroot, rotM(pose['hipPitch' + s], -sx * pose['hipOut' + s], 0));
     const kn  = add(hp, ap(Mth, [0, 0, -P.upLeg]));
     const Mca = mul(Mth, Rx(-pose['knee' + s] * D));

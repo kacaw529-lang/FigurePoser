@@ -7,7 +7,7 @@
  */
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { buildGeometries, disposeGeometries, buildFigure, applyPose, makeBase } from './meshes.js';
+import { buildGeometries, disposeGeometries, buildFigure, applyPose, makeBaseMM } from './meshes.js';
 import { fk, boundingBox, STANDING_H } from './skeleton.js';
 
 export class Viewer3D {
@@ -70,7 +70,7 @@ export class Viewer3D {
     this.meshes = null;
     this.figureGroup = null;
     this.base = null;
-    this.setQuality(22);
+    this.setQuality(32);
 
     // 重心標記
     const cm = new THREE.Mesh(
@@ -97,15 +97,21 @@ export class Viewer3D {
     disposeGeometries(old);
   }
 
-  /** 底座直徑（mm），0 表示不加 */
-  setBase(diameterMM, headRadiusMM) {
-    if (this.base) { this.placeGroup.remove(this.base); this.base.geometry.dispose(); this.base = null; }
+  /**
+   * 底座直徑（mm），0 表示不加。
+   * 底座直接掛在場景上（場景單位就是 mm），不放進會縮放或位移的群組，
+   * 否則它會跟著人偶的置中位移跑到腰部高度，而且移除時父節點對不上就刪不掉。
+   */
+  setBase(diameterMM) {
+    if (this.base) {
+      this.base.parent.remove(this.base);
+      this.base.geometry.dispose();
+      this.base = null;
+    }
     if (diameterMM > 0) {
-      const u = diameterMM / headRadiusMM;          // 換算成模型單位
-      this.base = makeBase(u, 1.2 / headRadiusMM, this.material, 64);
-      this.base.matrixAutoUpdate = true;
+      this.base = new THREE.Mesh(makeBaseMM(diameterMM, 64), this.material);
       this.base.castShadow = this.base.receiveShadow = true;
-      this.scaleGroup.add(this.base);
+      this.scene.add(this.base);
     }
   }
 

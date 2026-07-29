@@ -73,12 +73,17 @@ export function applyPose(meshes, parts) {
   }
 }
 
-/** 選配底座：貼在 Z=0 的薄圓盤（單位為 mm，需自行換算成模型單位） */
-export function makeBase(diameterModelUnits, thickness, material, seg = 64) {
-  const g = new THREE.CylinderGeometry(diameterModelUnits / 2, diameterModelUnits / 2, thickness, seg);
+/** 底座厚度（mm） */
+export const BASE_THICKNESS = 1.2;
+
+/**
+ * 選配底座：直接以實際 mm 建立，貼在列印平台 z = 0 上。
+ * 注意它不屬於人偶群組，因此不隨頭部直徑縮放，也不能掛在會位移的群組底下——
+ * 底座的意義就是「在地面」，任何額外位移都會讓它飄到半空中。
+ */
+export function makeBaseMM(diameterMM, seg = 64) {
+  const g = new THREE.CylinderGeometry(diameterMM / 2, diameterMM / 2, BASE_THICKNESS, seg);
   g.rotateX(Math.PI / 2);
-  g.translate(0, 0, thickness / 2);
-  const m = new THREE.Mesh(g, material);
-  m.matrixAutoUpdate = false;
-  return m;
+  g.translate(0, 0, BASE_THICKNESS / 2);
+  return g;
 }
