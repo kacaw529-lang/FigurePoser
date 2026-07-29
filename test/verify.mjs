@@ -1,0 +1,180 @@
+import { JSDOM } from 'jsdom'
+import fs from 'node:fs'
+
+// 執行方式：npm i --no-save three jsdom && node test/verify.mjs
+import { Blob } from 'node:buffer'
+process.chdir(new URL('..', import.meta.url).pathname)
+globalThis.Blob = globalThis.Blob || Blob
+
+const SK = await import('../src/skeleton.js')
+const { PRESETS } = await import('../src/presets.js')
+const { exportSTL, segmentsFor } = await import('../src/stl.js')
+
+let pass = 0, fail = 0
+const check = (name, ok, extra='') => { ok ? pass++ : fail++; console.log(`${ok?'✓':'✗'} ${name}${extra?'  '+extra:''}`) }
+
+console.log('【幾何約束】')
+const P = SK.P
+check('肩球頂不高於軀幹頂面', P.shoulderZ + P.armR <= P.torsoH, `餘裕 ${(P.torsoH-P.shoulderZ-P.armR).toFixed(3)}`)
+check('頭球底部埋入軀幹',      P.headPivotZ + P.headDist - P.headR < P.torsoH, `埋入 ${(P.torsoH-(P.headPivotZ+P.headDist-P.headR)).toFixed(3)}`)
+check('髖球未穿出軀幹底面',    P.hipZ - P.legR >= 0, `餘裕 ${(P.hipZ-P.legR).toFixed(3)}`)
+check('髖球未穿出軀幹側面',    P.hipX + P.legR <= P.torsoW/2, `餘裕 ${(P.torsoW/2-P.hipX-P.legR).toFixed(3)}`)
+{
+  const pose = SK.clonePose(null); pose.headPitch = SK.HEAD_TILT_MAX
+  const J = SK.fk(pose).joints
+  check('頭傾到極限仍埋入軀幹', J.head[2]-P.headR < P.torsoH && Math.abs(J.head[1]) < P.torsoD/2,
+        `頭底 ${(J.head[2]-P.headR).toFixed(2)} < ${P.torsoH}`)
+}
+
+console.log('\n【接縫平滑度】')
+check('關節兩側直徑相同（foreScale = 1）', P.foreScale === 1,
+      `上臂 ${P.armR} / 前臂 ${(P.armR*P.foreScale).toFixed(3)}`)
+check('軀幹圓角 ≥ 手臂半徑（肩部收得進去）', P.torsoR >= P.armR, `圓角 ${P.torsoR} vs 手臂半徑 ${P.armR}`)
+{
+  // 關節球是否確實埋在軀幹表面內
+  const probe = (label, p) => SK.torsoSDF(p)
+  const s = [
+    ['肩球頂', [P.shoulderX, 0, P.shoulderZ + P.armR]],
+    ['肩球後', [P.shoulderX, -P.armR, P.shoulderZ]],
+    ['髖球底', [P.hipX, 0, P.hipZ - P.legR]],
+    ['髖球後', [P.hipX, -P.legR, P.hipZ]],
+    ['髖球外', [P.hipX + P.legR, 0, P.hipZ]]
+  ]
+  for (const [label, p] of s) check(`${label}未凸出軀幹`, probe(label, p) <= 0.001, `SDF ${probe(label,p).toFixed(4)}`)
+}
+
+console.log('\n【大腿是否從軀幹背面穿出】')
+{
+  const bump = pose => {
+    const { joints: J } = SK.fk(pose)
+    let mx = 0
+    for (const [a, b] of [[J.hipL, J.kneeL], [J.hipR, J.kneeR]])
+      for (let i = 0; i <= 80; i++) {
+        const t = i / 80
+        const w = [a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t, a[2]+(b[2]-a[2])*t]
+        const p = SK.ap(SK.tp(J.Mwaist), w), sd = SK.torsoSDF(p)
+        if (sd > 0) continue
+        const poke = sd + P.legR
+        if (poke <= 0) continue
+        const e = 1e-4
+        const g = [0,1,2].map(k => { const q=[...p]; q[k]+=e; return (SK.torsoSDF(q)-sd)/e })
+        const L = Math.hypot(...g), nn = g.map(v => v/L)
+        if (nn[1] < -0.4 && poke > mx) mx = poke
+      }
+    return mx
+  }
+  for (const [name, pre] of Object.entries(PRESETS))
+    check(`${name.padEnd(10)} 背面無圓凸`, bump(SK.clonePose(pre)) < 0.05)
+  // 髖後擺超過限制時本來就會穿背，確認限制值擋得住
+  const over = SK.clonePose(null); over.hipPitchL = -78; over.hipPitchR = -78
+  check('髖後擺 −78°（超出限制）確實會穿背', bump(over) > 0.3, '證明這個檢查有效')
+}
+
+console.log('\n【反解往返】')
+{
+  let bad=0
+  for(let i=0;i<5000;i++){
+    const Mp=SK.rotM(Math.random()*200-100,Math.random()*200-100,Math.random()*360-180)
+    const sx=Math.random()<.5?-1:1, pitch=Math.random()*340-170, out=Math.random()*110-15
+    const dir=SK.ap(SK.mul(Mp,SK.rotM(pitch,-sx*out,0)),[0,0,-1])
+    const r=SK.solve2(Mp,dir,sx)
+    const d2=SK.ap(SK.mul(Mp,SK.rotM(r.pitch,-sx*r.out,0)),[0,0,-1])
+    if(Math.hypot(dir[0]-d2[0],dir[1]-d2[1],dir[2]-d2[2])>1e-9) bad++
+  }
+  check('肩／髖 2 自由度反解 5000 次', bad===0, `失敗 ${bad}`)
+  let bad2=0
+  for(let i=0;i<5000;i++){
+    const Mup=SK.rotM(Math.random()*300-150,Math.random()*160-80,Math.random()*360-180)
+    const bend=Math.random()*150
+    const dir=SK.ap(SK.mul(Mup,SK.Rx(bend*Math.PI/180)),[0,0,-1])
+    if(Math.abs(SK.clamp(SK.solve1(Mup,dir),0,150)-bend)>1e-9) bad2++
+  }
+  check('肘／膝 1 自由度反解 5000 次', bad2===0, `失敗 ${bad2}`)
+  let over=0
+  for(let i=0;i<3000;i++){
+    const d=SK.norm([Math.random()*2-1,Math.random()*2-1,Math.random()*2-1])
+    const r=SK.solveHead([[1,0,0],[0,1,0],[0,0,1]],d)
+    const pose=SK.clonePose(null); Object.assign(pose,r)
+    const J=SK.fk(pose).joints
+    const dir=SK.norm(SK.sub(J.head,J.headPivot))
+    if(SK.deg(Math.acos(SK.clamp(dir[2],-1,1))) > SK.HEAD_TILT_MAX+1e-6) over++
+  }
+  check('頭部傾角受 30° 限制', over===0, `超出 ${over}`)
+}
+
+console.log('\n【STL 匯出】')
+async function bbox(blob){
+  const b = Buffer.from(await blob.arrayBuffer())
+  const n = b.readUInt32LE(80)
+  const mn=[1e9,1e9,1e9], mx=[-1e9,-1e9,-1e9]; let deg=0
+  for(let i=0;i<n;i++){ const o=84+i*50; const v=[]
+    for(let k=0;k<3;k++){ const p=[b.readFloatLE(o+12+k*12),b.readFloatLE(o+16+k*12),b.readFloatLE(o+20+k*12)]
+      v.push(p); for(let j=0;j<3;j++){ if(p[j]<mn[j])mn[j]=p[j]; if(p[j]>mx[j])mx[j]=p[j] } }
+    const A=[v[1][0]-v[0][0],v[1][1]-v[0][1],v[1][2]-v[0][2]], B=[v[2][0]-v[0][0],v[2][1]-v[0][1],v[2][2]-v[0][2]]
+    if(Math.hypot(A[1]*B[2]-A[2]*B[1],A[2]*B[0]-A[0]*B[2],A[0]*B[1]-A[1]*B[0])<1e-12) deg++ }
+  return {n,mn,mx,deg}
+}
+for (const [name,p] of Object.entries(PRESETS)) {
+  const pose = SK.clonePose(p)
+  const r = exportSTL(pose, 3.1, { tolerance: 0.05 })
+  const v = await bbox(r.blob)
+  const size=[v.mx[0]-v.mn[0],v.mx[1]-v.mn[1],v.mx[2]-v.mn[2]]
+  const ok = Math.abs(v.mn[2])<1e-3 && Math.abs(v.mn[0]+v.mx[0])<1e-3 && Math.abs(v.mn[1]+v.mx[1])<1e-3
+    && v.deg===0 && size.every((s,i)=>Math.abs(s-[r.size.x,r.size.y,r.size.z][i])<1e-3)
+  check(name.padEnd(10), ok, `${size.map(s=>s.toFixed(2)).join('×')} mm  ${v.n} 面  ${(r.bytes/1024).toFixed(0)} KB`)
+}
+{
+  const t0=Date.now(); exportSTL(SK.clonePose(PRESETS['07 側躺']), 25, { tolerance: 0.02 }); const dt=Date.now()-t0
+  check('大模型(50mm 頭)高品質匯出耗時', dt < 8000, `${dt} ms，${segmentsFor(25,0.02)} 段`)
+}
+
+console.log('\n【UI 串接】')
+{
+  const dom = new JSDOM(fs.readFileSync('index.html','utf8'), { pretendToBeVisual:true })
+  const { window } = dom
+  global.window=window; global.document=window.document
+  Object.defineProperty(global,'navigator',{value:window.navigator,configurable:true})
+  global.requestAnimationFrame=()=>0; window.devicePixelRatio=1
+  const c2d = new Proxy({}, { get:(t,k)=> k==='canvas'?{}:()=>{} })
+  window.HTMLCanvasElement.prototype.getContext = t => t==='2d'?c2d:null
+  window.Element.prototype.getBoundingClientRect = () => ({width:400,height:330,left:0,top:0})
+  window.HTMLCanvasElement.prototype.setPointerCapture = ()=>{}
+  await import('../src/main.js')
+  const $ = id => document.getElementById(id)
+  check('WebGL 不可用時仍能運作', $('view3d').textContent.includes('WebGL'))
+  check('八款預設按鈕已建立', $('presetRow').children.length===8)
+  check('姿態滑桿已建立', $('sliders').querySelectorAll('input').length===6)
+  ;[...$('presetRow').children].find(b=>b.dataset.name.startsWith('08')).click()
+  {
+    const expect = (SK.boundingBox(SK.clonePose(PRESETS['08 大字型'])).size[0] * 3.1).toFixed(1)
+    check('切換預設會更新外框', $('sizeBox').textContent.startsWith(expect), $('sizeBox').textContent)
+  }
+  const hd=$('headDia'); hd.value='12'; hd.dispatchEvent(new window.Event('input'))
+  check('改頭部直徑會等比放大',
+        $('sizeStand').textContent===(SK.STANDING_H*6).toFixed(1)+' mm', $('sizeStand').textContent)
+  const cv=$('cvFront')
+  const pe=(t,x,y)=>{const e=new window.Event(t,{bubbles:true});Object.assign(e,{clientX:x,clientY:y,pointerId:1,preventDefault(){}});return e}
+  ;[...$('presetRow').children].find(b=>b.dataset.name.startsWith('03')).click()
+  // 由實際關節位置換算控制點的螢幕座標，體型比例改變時測試才不會失效
+  const SC = Math.min(400/11.0, 330/11.6), CX = 200, CY = 330*0.60
+  const toS = p => [CX + (-p[0])*SC, CY - p[2]*SC]
+  const elbow = toS(SK.fk(SK.clonePose(PRESETS['03 直立'])).joints.elbowL)
+  cv.dispatchEvent(pe('pointerdown', elbow[0], elbow[1]))
+  cv.dispatchEvent(pe('pointermove', elbow[0]+3.0*SC, elbow[1]-1.5*SC))
+  cv.dispatchEvent(pe('pointerup',0,0))
+  const after=JSON.parse($('code').value)
+  check('拖曳控制點會改變姿勢', after.armOutL!==7 || after.armPitchL!==0, `armOutL=${after.armOutL} armPitchL=${after.armPitchL}`)
+  check('拖曳後取消預設高亮', ![...$('presetRow').children].some(b=>b.classList.contains('on')))
+  // 把膝蓋控制點往正後方拖很遠，髖後擺應被限制值擋住
+  const cvS = $('cvSide')
+  const toSide = p => [CX + p[1]*SC, CY - p[2]*SC]
+  const knee = toSide(SK.fk(JSON.parse($('code').value)).joints.kneeL)
+  cvS.dispatchEvent(pe('pointerdown', knee[0], knee[1]))
+  cvS.dispatchEvent(pe('pointermove', knee[0] - 6*SC, knee[1] - 1.0*SC))
+  cvS.dispatchEvent(pe('pointerup',0,0))
+  const hp = JSON.parse($('code').value).hipPitchL
+  check('拖曳時髖後擺受限制', hp >= SK.LIMITS.hipPitch[0], `hipPitchL=${hp}，下限 ${SK.LIMITS.hipPitch[0]}`)
+}
+
+console.log(`\n通過 ${pass} 項，失敗 ${fail} 項`)
+process.exit(fail?1:0)

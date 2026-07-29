@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>人偶姿勢產生器</title>
+<link rel="icon" href="data:,">
+<style>
+  :root{
+    --bg:#f6f3ee; --card:#fffdfa; --line:#e3dcd1; --ink:#3c332a;
+    --sub:#8a7d6d; --accent:#c8845a; --accentSoft:#f4e6da;
+    --left:#3f86bd; --right:#d1673f; --ok:#4f9d69; --bad:#cf5b4a;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0}
+  body{background:var(--bg);color:var(--ink);
+    font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+    font-size:15px;line-height:1.6;padding:14px;max-width:1400px;margin:0 auto}
+  h1{font-size:20px;margin:0 0 3px}
+  .ver{font-size:11.5px;font-weight:400;color:var(--sub);vertical-align:middle;
+    border:1px solid var(--line);border-radius:20px;padding:1px 8px;margin-left:4px}
+  .lead{color:var(--sub);font-size:13px;margin:0 0 14px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;
+    padding:12px;margin-bottom:12px}
+  .sec{font-size:13px;font-weight:700;color:var(--sub);margin:0 0 8px}
+  .row{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+
+  /* 三個面板 */
+  .panels{display:grid;gap:10px;grid-template-columns:1fr}
+  @media(min-width:900px){.panels{grid-template-columns:1fr 1fr 1.35fr}}
+  .panel{min-width:0}
+  .panel h2{font-size:13px;font-weight:700;color:var(--sub);margin:0 0 5px}
+  canvas.edit{width:100%;height:330px;display:block;background:#fffefc;
+    border:1px solid var(--line);border-radius:10px;touch-action:none;cursor:grab}
+  canvas.edit.dragging{cursor:grabbing}
+  #view3d{width:100%;height:330px;border:1px solid var(--line);border-radius:10px;
+    overflow:hidden;background:linear-gradient(#fffefc,#f2ece2)}
+  #view3d canvas{display:block;border-radius:10px}
+  .loadError{display:none;background:#fbeae7;border:1px solid #e8c4bc;color:#a4402f;
+    border-radius:12px;padding:14px 16px;margin-bottom:12px;font-size:13.5px;line-height:1.9}
+  .loadError code{background:#fff;padding:1px 5px;border-radius:4px;font-size:12.5px}
+  .fallback{display:flex;align-items:center;justify-content:center;height:100%;
+    padding:16px;text-align:center;font-size:13px;color:var(--sub);line-height:1.8}
+
+  button{font:inherit;font-size:13px;padding:6px 11px;border-radius:9px;
+    border:1px solid var(--line);background:#fff;color:var(--ink);cursor:pointer}
+  button:hover:not(:disabled){background:var(--accentSoft)}
+  button:disabled{opacity:.55;cursor:default}
+  .chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
+  .primary{background:var(--accent);border-color:var(--accent);color:#fff;
+    font-weight:700;padding:9px 20px}
+  .primary:hover:not(:disabled){filter:brightness(1.06);background:var(--accent)}
+
+  .sl{display:grid;grid-template-columns:76px 1fr 48px;align-items:center;
+    gap:8px;margin-bottom:5px;font-size:13px}
+  .sl input{width:100%}
+  .sl b{text-align:right;font-variant-numeric:tabular-nums;color:var(--sub);font-weight:600}
+  .grid2{display:grid;gap:0 18px;grid-template-columns:1fr}
+  @media(min-width:640px){.grid2{grid-template-columns:1fr 1fr}}
+
+  .stat{font-size:13px;padding:7px 11px;border-radius:9px;margin-top:8px}
+  .stat.ok{background:#e9f4ed;color:var(--ok)}
+  .stat.bad{background:#fbeae7;color:var(--bad)}
+  .readout{display:flex;flex-wrap:wrap;gap:6px 20px;font-size:13px;color:var(--sub);margin-top:8px}
+  .readout b{color:var(--ink);font-variant-numeric:tabular-nums}
+  .legend{font-size:12px;color:var(--sub);margin-top:7px}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;vertical-align:middle;margin:0 3px}
+  label.cb{font-size:13px;display:inline-flex;align-items:center;gap:5px;cursor:pointer}
+  select{font:inherit;font-size:13px;padding:5px 8px;border-radius:8px;
+    border:1px solid var(--line);background:#fff;color:var(--ink)}
+  textarea{width:100%;height:66px;font-family:ui-monospace,Menlo,Consolas,monospace;
+    font-size:11.5px;border:1px solid var(--line);border-radius:9px;padding:8px;
+    background:#fffefc;color:var(--ink);resize:vertical}
+  details{margin-top:4px}
+  summary{cursor:pointer;font-size:13px;color:var(--sub)}
+  .note{font-size:12.5px;color:var(--sub);margin:8px 0 0}
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "./lib/three.module.js",
+    "three/addons/": "./lib/addons/"
+  }
+}
+</script>
+</head>
+<body>
+
+<h1>人偶姿勢產生器 <span class="ver" id="ver">—</span></h1>
+<p class="lead">拖動圓點擺姿勢，右邊即時預覽，滿意後直接匯出 STL 列印。</p>
+
+<div class="card">
+  <div class="sec">預設動作</div>
+  <div class="row" id="presetRow"></div>
+</div>
+
+<div class="card">
+  <div class="panels">
+    <div class="panel">
+      <h2>正面（管左右張開）</h2>
+      <canvas id="cvFront" class="edit"></canvas>
+    </div>
+    <div class="panel">
+      <h2>側面（管前後擺動）</h2>
+      <canvas id="cvSide" class="edit"></canvas>
+    </div>
+    <div class="panel">
+      <h2>3D 預覽（可拖曳旋轉、滾輪縮放）</h2>
+      <div id="view3d"></div>
+    </div>
+  </div>
+  <div class="legend">
+    <span class="dot" style="background:var(--left)"></span>左手左腳
+    <span class="dot" style="background:var(--right)"></span>右手右腳
+    <span class="dot" style="background:var(--sub)"></span>頭部
+    ・大圓點決定方向，小圓點決定彎曲・叉叉是重心落點
+  </div>
+  <div id="stability" class="stat ok">重心穩定，站得住</div>
+  <div class="readout">
+    <span>站姿全高 <b id="sizeStand">—</b></span>
+    <span>目前姿勢外框 <b id="sizeBox">—</b></span>
+  </div>
+</div>
+
+<div class="card">
+  <div class="grid2">
+    <div>
+      <div class="sec">整體姿態</div>
+      <div id="sliders"></div>
+      <div class="row" style="margin-top:8px">
+        <label class="cb"><input type="checkbox" id="mirror"> 左右對稱</label>
+        <button id="btnReset" style="margin-left:auto">全部歸零</button>
+      </div>
+    </div>
+    <div>
+      <div class="sec">尺寸</div>
+      <div class="sl">
+        <span>頭部直徑</span>
+        <input type="range" id="headDia" min="3" max="40" step="0.2" value="6.2">
+        <b id="headDiaVal">6.2 mm</b>
+      </div>
+      <div class="sl">
+        <span>底座直徑</span>
+        <input type="range" id="baseDia" min="0" max="60" step="1" value="0">
+        <b id="baseDiaVal">不加</b>
+      </div>
+      <p class="note">其餘部位一律依比例連動，站姿全高約為頭部直徑的 4.8 倍。重心不穩時可加底座。</p>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="sec">匯出</div>
+  <div class="row">
+    <button class="primary" id="btnExport">匯出 STL</button>
+    <label class="cb">品質
+      <select id="quality" title="容許的表面誤差，分段數會依模型大小自動調整">
+        <option value="0.1">一般（誤差 0.1 mm）</option>
+        <option value="0.05" selected>精細（誤差 0.05 mm）</option>
+        <option value="0.02">最高（誤差 0.02 mm）</option>
+      </select>
+    </label>
+  </div>
+  <p class="note" id="exportInfo">模型會自動置中並貼齊列印平台。各部位是重疊的獨立實體，切片軟體會自動聯集，屬正常情形。</p>
+  <details>
+    <summary>姿勢代碼（存檔／分享用）</summary>
+    <textarea id="code" spellcheck="false"></textarea>
+    <div class="row" style="margin-top:6px">
+      <button id="btnCopy">複製</button>
+      <button id="btnLoad">讀入</button>
+    </div>
+  </details>
+</div>
+
+<div id="loadError" class="loadError">
+  <b>程式沒有載入成功</b>
+  <div id="loadErrorMsg">正在檢查原因…</div>
+</div>
+
+<!-- 這段刻意用傳統 script，模組載入失敗時它仍會執行 -->
+<script>
+(function () {
+  window.__poserReady = false;
+  var failed = [];
+  window.addEventListener('error', function (e) {
+    if (e.target && e.target.tagName === 'SCRIPT' && e.target.src) failed.push(e.target.src);
+  }, true);
+
+  setTimeout(function () {
+    if (window.__poserReady) return;
+    var box = document.getElementById('loadError');
+    var msg = document.getElementById('loadErrorMsg');
+    box.style.display = 'block';
+
+    fetch('./lib/three.module.js', { method: 'HEAD', cache: 'no-store' })
+      .then(function (r) {
+        if (!r.ok) throw new Error(r.status);
+        msg.innerHTML = '程式檔讀取正常，但初始化失敗。請按 F12 打開主控台看錯誤訊息。' +
+          (failed.length ? '<br>載入失敗的檔案：' + failed.join('、') : '');
+      })
+      .catch(function () {
+        msg.innerHTML =
+          '找不到 <code>lib/three.module.js</code>。<br>' +
+          '若是放在 GitHub Pages，多半是 Jekyll 把資料夾濾掉了：' +
+          '請在專案根目錄新增一個空白檔案 <code>.nojekyll</code>，等一分鐘再重新整理。<br>' +
+          '若是在自己電腦上，請確認是用本機伺服器開啟（例如 <code>python3 -m http.server</code>），' +
+          '而不是直接雙擊 index.html。';
+      });
+  }, 4000);
+})();
+</script>
+<script type="module" src="./src/main.js?v=1.1.0"></script>
+</body>
+</html>
