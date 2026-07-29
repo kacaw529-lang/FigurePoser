@@ -100,6 +100,51 @@ console.log('\n【髖球是否始終埋在軀幹內】')
     check(`${name.padEnd(10)} 髖球埋在軀幹內`, out(SK.clonePose(pre)) <= 0);
 }
 
+console.log('\n【預設動作是否名實相符】')
+{
+  const ground = pose => SK.boundingBox(pose).min[2];
+  const stable = pose => {
+    const { joints: J } = SK.fk(pose), pts = SK.extremes(J);
+    const gz = Math.min(...pts.map(p => p[2])) - P.legR * 0.9;
+    const com = SK.centerOfMass(J);
+    const low = pts.filter(p => p[2] < gz + 1.1);
+    if (!low.length) return false;
+    const xs = low.map(p => p[0]), ys = low.map(p => p[1]), pad = 0.38;
+    return com[0] > Math.min(...xs) - pad && com[0] < Math.max(...xs) + pad &&
+           com[1] > Math.min(...ys) - pad && com[1] < Math.max(...ys) + pad;
+  };
+  for (const [name, pre] of Object.entries(PRESETS))
+    check(`${name.padEnd(10)} 重心穩定`, stable(SK.clonePose(pre)));
+
+  // 01：手掌要真的碰到頭，而且不越過中線
+  {
+    const { joints: J } = SK.fk(SK.clonePose(PRESETS['01 舉手抱頭']));
+    const headC = J.head;
+    const d = Math.hypot(J.handR[0]-headC[0], J.handR[1]-headC[1], J.handR[2]-headC[2]);
+    check('01 手掌貼合頭部', d < P.headR + P.armR * 0.5, `手到頭心 ${d.toFixed(2)}，頭半徑 ${P.headR}`);
+    check('01 雙手未交叉', J.handR[0] > -0.35 && J.handL[0] < 0.35,
+          `右手 x=${J.handR[0].toFixed(2)} 左手 x=${J.handL[0].toFixed(2)}`);
+  }
+
+  // 04：正座的小腿要平貼地面 —— 膝與腳同時著地
+  {
+    const pose = SK.clonePose(PRESETS['04 跪坐']);
+    const { joints: J } = SK.fk(pose), g = ground(pose);
+    const knee = J.kneeL[2] - P.legR - g, foot = J.footL[2] - P.legR - g;
+    check('04 小腿平貼地面', knee < 0.05 && foot < 0.05,
+          `膝離地 ${(knee*3.1).toFixed(2)} mm、腳離地 ${(foot*3.1).toFixed(2)} mm`);
+    check('04 軀幹直立', Math.abs(pose.rootPitch) < 10 && Math.abs(pose.waistPitch) < 10);
+  }
+
+  // 05：趴伏要壓低，臀部不能翹得比頭高太多
+  {
+    const pose = SK.clonePose(PRESETS['05 蜷曲趴伏']);
+    const { joints: J } = SK.fk(pose), g = ground(pose);
+    const hip = (J.pelvis[2] - g) * 3.1, h = SK.boundingBox(pose).size[2] * 3.1;
+    check('05 姿態夠低伏', h < 13 && hip < 6, `總高 ${h.toFixed(1)} mm、臀高 ${hip.toFixed(1)} mm`);
+  }
+}
+
 console.log('\n【反解往返】')
 {
   let bad=0
