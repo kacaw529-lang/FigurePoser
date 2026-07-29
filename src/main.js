@@ -13,7 +13,7 @@ import { encodeState, decodeState, shareURL, HEAD_MIN, HEAD_MAX } from './share.
  * 更新網站後若看不出變化，先確認這裡的號碼有沒有跟著變——
  * GitHub Pages 對 JS 檔會快取十分鐘，多半是瀏覽器還在用舊檔，按 Ctrl+Shift+R 即可。
  */
-const VERSION = 'v1.8.0';
+const VERSION = 'v1.9.0';
 
 const $ = id => document.getElementById(id);
 $('ver').textContent = VERSION;
@@ -73,6 +73,48 @@ function markPreset(name) {
   [...presetRow.children].forEach(c => c.classList.toggle('on', c.dataset.name === name));
 }
 
+// ── 滑桿微調鈕 ───────────────────────────────────────────
+/**
+ * 在 range 兩側插入 − / + 按鈕。
+ * 按一下走一格（用滑桿自己的 step），按住不放 0.4 秒後開始連續跳。
+ * 調整後直接對 input 發送 input 事件，沿用原本的處理邏輯，不另外複製一份。
+ */
+function attachStepper(input) {
+  const makeButton = (label, dir) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'step';
+    btn.textContent = label;
+    btn.setAttribute('aria-label', (dir < 0 ? '減少 ' : '增加 ') + (input.id || ''));
+    btn.tabIndex = -1;
+
+    const bump = () => {
+      const step = +input.step || 1;
+      const min = +input.min, max = +input.max;
+      const next = Math.min(max, Math.max(min, +input.value + dir * step));
+      // step 是小數時直接累加會產生 6.199999… 這種值，先依 step 的位數修掉
+      const decimals = (String(step).split('.')[1] || '').length;
+      input.value = next.toFixed(decimals);
+      input.dispatchEvent(new window.Event('input', { bubbles: true }));
+    };
+
+    let holdDelay = null, holdTimer = null;
+    const stop = () => {
+      clearTimeout(holdDelay); clearInterval(holdTimer);
+      holdDelay = holdTimer = null;
+    };
+    btn.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      bump();
+      holdDelay = setTimeout(() => { holdTimer = setInterval(bump, 80); }, 400);
+    });
+    for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) btn.addEventListener(ev, stop);
+    return btn;
+  };
+  input.before(makeButton('−', -1));
+  input.after(makeButton('+', 1));
+}
+
 // ── 姿態滑桿 ─────────────────────────────────────────────
 // 範圍一律取自 skeleton.js 的 LIMITS，不另外寫死
 const SLIDERS = [
@@ -95,6 +137,7 @@ for (const [key, label, mn, mx] of SLIDERS) {
     `<input type="range" min="${mn}" max="${mx}" step="1" data-k="${key}">` +
     `<b data-v="${key}">0°</b>`;
   slBox.appendChild(row);
+  attachStepper(row.querySelector('input'));
   row.querySelector('input').addEventListener('input', e => {
     state.pose[key] = +e.target.value;
     if (state.mirror && key === 'armTwistL') state.pose.armTwistR = state.pose.armTwistL;
@@ -112,6 +155,8 @@ function syncSliders() {
 }
 
 // ── 尺寸與底座 ───────────────────────────────────────────
+[$('headDia'), $('baseDia')].forEach(attachStepper);
+
 $('headDia').addEventListener('input', e => {
   state.headDiameter = Math.max(HEAD_MIN, Math.min(HEAD_MAX, +e.target.value));
   $('headDiaVal').textContent = state.headDiameter.toFixed(1) + ' mm';

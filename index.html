@@ -52,8 +52,15 @@
     font-weight:700;padding:9px 20px}
   .primary:hover:not(:disabled){filter:brightness(1.06);background:var(--accent)}
 
-  .sl{display:grid;grid-template-columns:76px 1fr 48px;align-items:center;
-    gap:8px;margin-bottom:3px;font-size:13px}
+  .sl{display:grid;grid-template-columns:72px 26px 1fr 26px 46px;align-items:center;
+    gap:6px;margin-bottom:4px;font-size:13px}
+  @media(max-width:420px){.sl{grid-template-columns:60px 26px 1fr 26px 44px;gap:4px}}
+  /* 滑桿兩側的微調鈕：一下一格，按住不放會連續跳 */
+  button.step{padding:0;height:25px;min-width:26px;font-size:16px;line-height:1;
+    display:flex;align-items:center;justify-content:center;border-radius:7px;
+    color:var(--sub);touch-action:manipulation;user-select:none}
+  button.step:hover:not(:disabled){background:var(--accentSoft);color:var(--ink)}
+  button.step:active{background:var(--accent);border-color:var(--accent);color:#fff}
   #sliders{display:grid;grid-template-columns:1fr;gap:0 20px}
   @media(min-width:760px){#sliders{grid-template-columns:1fr 1fr}}
   @media(min-width:1200px){#sliders{grid-template-columns:1fr 1fr 1fr}}
@@ -236,6 +243,6 @@
   }, 4000);
 })();
 </script>
-<script type="module" src="./src/main.js?v=1.8.0"></script>
+<script type="module" src="./src/main.js?v=1.9.0"></script>
 </body>
 </html>

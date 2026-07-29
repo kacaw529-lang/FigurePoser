@@ -341,6 +341,45 @@ console.log('\n【UI 串接】')
   const hp = JSON.parse($('code').value).hipPitchL
   check('拖曳時髖後擺受限制', hp >= SK.LIMITS.hipPitch[0], `hipPitchL=${hp}，下限 ${SK.LIMITS.hipPitch[0]}`)
   check('分享連結欄位有填入', /#p=/.test($('shareUrl').value), $('shareUrl').value.slice(-40))
+
+  // 微調鈕：每根滑桿左右各一顆，按一下走一格
+  {
+    const rows = [...$('sliders').querySelectorAll('.sl'), ...document.querySelectorAll('.sl')]
+    const uniq = [...new Set(rows)]
+    const ok = uniq.every(r => r.querySelectorAll('button.step').length === 2)
+    check('每根滑桿兩側都有微調鈕', ok && uniq.length === 8, `${uniq.length} 根滑桿`)
+
+    const press = btn => {
+      const e = new window.Event('pointerdown', { bubbles: true })
+      e.preventDefault = () => {}
+      btn.dispatchEvent(e)
+      btn.dispatchEvent(new window.Event('pointerup', { bubbles: true }))
+    }
+    // 角度：一格 1 度
+    ;[...$('presetRow').children].find(b => b.dataset.name.startsWith('03')).click()
+    const row = $('sliders').querySelector('.sl')
+    const [minus, plus] = row.querySelectorAll('button.step')
+    const before = JSON.parse($('code').value).rootPitch
+    press(plus); press(plus); press(plus)
+    const after = JSON.parse($('code').value).rootPitch
+    check('按 + 三下角度加 3 度', after === before + 3, `${before} → ${after}`)
+    press(minus)
+    check('按 − 一下角度減 1 度', JSON.parse($('code').value).rootPitch === after - 1)
+
+    // 小數 step 不能累積浮點誤差
+    const hd = $('headDia')
+    hd.value = '6.2'; hd.dispatchEvent(new window.Event('input'))
+    const hplus = hd.nextElementSibling
+    for (let i = 0; i < 4; i++) press(hplus)
+    check('頭部直徑 0.2 mm 一格且無浮點誤差', hd.value === '7.0', `6.2 加四格 → ${hd.value}`)
+
+    // 到達上下限就停住
+    const bd = $('baseDia')
+    const bminus = bd.previousElementSibling
+    bd.value = '1'; bd.dispatchEvent(new window.Event('input'))
+    press(bminus); press(bminus); press(bminus)
+    check('觸底後不會變成負值', +bd.value === 0, `底座 ${bd.value}`)
+  }
 }
 
 console.log('\n【從網址載入】')
