@@ -20,13 +20,13 @@ export const PRESETS = {
     armPitchL: 12, armOutL: 8, elbowL: 20,
     armPitchR: 12, armOutR: 8, elbowR: 20
   },
-  // 整體前傾拆成 root 46° + 腰 40°，髖只後擺 20°。
-  // 若像早期版本那樣讓髖後擺到 −78°，大腿會從軀幹背面中段穿出來，
-  // 在背上形成一塊圓凸（俗稱的「屁股」）。
+  // 趴：rootPitch 為正代表整體往前傾，臉朝下。
+  // 髖同步跟到 80°，大腿在世界座標維持垂直，跪在地上；
+  // 腰只彎 10°，超過就會在背上擠出一塊圓凸。
   '05 蜷曲趴伏': {
-    rootPitch: 46, waistPitch: 40, headPitch: -12,
-    hipPitchL: -20, kneeL: 148, hipOutL: 11,
-    hipPitchR: -20, kneeR: 148, hipOutR: 11,
+    rootPitch: 82, waistPitch: 10, headPitch: 16,
+    hipPitchL: 80, kneeL: 152, hipOutL: 11,
+    hipPitchR: 80, kneeR: 152, hipOutR: 11,
     armPitchL: -45, armOutL: 13, elbowL: 100,
     armPitchR: -45, armOutR: 13, elbowR: 100
   },
@@ -35,7 +35,7 @@ export const PRESETS = {
     armOutL: 12, armOutR: 12, hipOutL: 5, hipOutR: 5
   },
   '07 側躺': {
-    rootPitch: -90, rootRoll: 62, waistPitch: 18, headPitch: 15,
+    rootPitch: -90, rootRoll: 62, waistPitch: 10, headPitch: 15,
     hipPitchL: 55, kneeL: 70, hipPitchR: 30, kneeR: 40,
     armPitchL: 45, elbowL: 65, armPitchR: 20, elbowR: 30
   },

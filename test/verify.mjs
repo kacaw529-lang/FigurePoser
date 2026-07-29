@@ -26,6 +26,30 @@ check('髖球未穿出軀幹側面',    P.hipX + P.legR <= P.torsoW/2, `餘裕 $
         `頭底 ${(J.head[2]-P.headR).toFixed(2)} < ${P.torsoH}`)
 }
 
+console.log('\n【前後方向】')
+{
+  const facing = pose => { const { joints: J } = SK.fk(pose); return [J.Mwaist[0][1], J.Mwaist[1][1], J.Mwaist[2][1]]; }
+  const bend = pose => SK.fk(pose).joints.headPivot[1];   // 軀幹頂端的前後位置
+
+  const prone = SK.clonePose(null); prone.rootPitch = 90;
+  const supine = SK.clonePose(null); supine.rootPitch = -90;
+  check('全身前傾 +90 = 趴著（臉朝下）', facing(prone)[2] < -0.99, `臉 z=${facing(prone)[2].toFixed(2)}`)
+  check('全身前傾 −90 = 仰躺（臉朝上）', facing(supine)[2] > 0.99, `臉 z=${facing(supine)[2].toFixed(2)}`)
+
+  const bow = SK.clonePose(null); bow.waistPitch = 20;
+  check('腰・前彎為正時軀幹確實往前', bend(bow) > 0.5, `軀幹頂 y=${bend(bow).toFixed(2)}`)
+
+  const head = SK.clonePose(null); head.headPitch = 25;
+  check('頭・低頭為正時頭確實往前低', SK.fk(head).joints.head[1] > 0.3, `頭 y=${SK.fk(head).joints.head[1].toFixed(2)}`)
+
+  const want = { '05 蜷曲趴伏': 'down', '06 仰躺': 'up', '08 大字型': 'up' };
+  for (const [name, dir] of Object.entries(want)) {
+    const f = facing(SK.clonePose(PRESETS[name]))[2];
+    check(`${name} 臉朝${dir === 'down' ? '下' : '上'}`,
+          dir === 'down' ? f < -0.5 : f > 0.5, `臉 z=${f.toFixed(2)}`)
+  }
+}
+
 console.log('\n【接縫平滑度】')
 check('關節兩側直徑相同（foreScale = 1）', P.foreScale === 1,
       `上臂 ${P.armR} / 前臂 ${(P.armR*P.foreScale).toFixed(3)}`)
@@ -65,9 +89,14 @@ console.log('\n【大腿是否從軀幹背面穿出】')
   }
   for (const [name, pre] of Object.entries(PRESETS))
     check(`${name.padEnd(10)} 背面無圓凸`, bump(SK.clonePose(pre)) < 0.05)
-  // 髖後擺超過限制時本來就會穿背，確認限制值擋得住
-  const over = SK.clonePose(null); over.hipPitchL = -78; over.hipPitchR = -78
-  check('髖後擺 −78°（超出限制）確實會穿背', bump(over) > 0.3, '證明這個檢查有效')
+  // 兩個限制值都要擋得住：髖後擺過大、腰前彎過大
+  const noClamp = src => SK.KEYS.reduce((o,k)=>(o[k]=(src&&k in src)?+src[k]:0,o),{})
+  check('髖後擺 −78°（未受限）確實會穿背', bump(noClamp({hipPitchL:-78,hipPitchR:-78})) > 0.3, '證明這個檢查有效')
+  check('腰前彎 50°（未受限）確實會穿背', bump(noClamp({waistPitch:50})) > 0.3, '證明這個檢查有效')
+  // clampPose 應該把它們收回範圍內
+  const c = SK.clonePose({ hipPitchL: -78, waistPitch: 50 })
+  check('clampPose 收束髖後擺', c.hipPitchL === SK.LIMITS.hipPitch[0], `${c.hipPitchL}`)
+  check('clampPose 收束腰前彎', c.waistPitch === SK.LIMITS.waistPitch[1], `${c.waistPitch}`)
 }
 
 console.log('\n【反解往返】')

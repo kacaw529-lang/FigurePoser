@@ -1,7 +1,7 @@
 /**
  * main.js — UI 綁定與各模組串接
  */
-import { KEYS, LR_KEYS, clonePose, STANDING_H, fk, centerOfMass, boundingBox } from './skeleton.js';
+import { KEYS, LR_KEYS, LIMITS, clonePose, clampPose, STANDING_H, fk, centerOfMass, boundingBox } from './skeleton.js';
 import { PRESETS, DEFAULT_PRESET } from './presets.js';
 import { Editor2D } from './editor2d.js';
 import { Viewer3D } from './viewer3d.js';
@@ -12,7 +12,7 @@ import { exportSTL, download } from './stl.js';
  * 更新網站後若看不出變化，先確認這裡的號碼有沒有跟著變——
  * GitHub Pages 對 JS 檔會快取十分鐘，多半是瀏覽器還在用舊檔，按 Ctrl+Shift+R 即可。
  */
-const VERSION = 'v1.1.0';
+const VERSION = 'v1.2.0';
 
 const $ = id => document.getElementById(id);
 $('ver').textContent = VERSION;
@@ -66,14 +66,18 @@ function markPreset(name) {
 }
 
 // ── 姿態滑桿 ─────────────────────────────────────────────
+// 範圍一律取自 skeleton.js 的 LIMITS，不另外寫死
 const SLIDERS = [
-  ['rootPitch', '全身前傾', -180, 180],
-  ['rootRoll', '全身側傾', -180, 180],
-  ['waistPitch', '腰・前彎', -60, 90],
-  ['waistTwist', '腰・扭轉', -60, 60],
-  ['armTwistL', '左臂扭轉', -180, 180],
-  ['armTwistR', '右臂扭轉', -180, 180]
-];
+  ['rootPitch', '全身前傾'],
+  ['rootRoll', '全身側傾'],
+  ['waistPitch', '腰・前彎'],
+  ['waistTwist', '腰・扭轉'],
+  ['armTwistL', '左臂扭轉'],
+  ['armTwistR', '右臂扭轉']
+].map(([k, label]) => {
+  const lim = LIMITS[/[LR]$/.test(k) ? k.slice(0, -1) : k];
+  return [k, label, lim[0], lim[1]];
+});
 const slBox = $('sliders');
 for (const [key, label, mn, mx] of SLIDERS) {
   const row = document.createElement('div');
@@ -192,6 +196,7 @@ function refresh(reframe = false) {
     if (reframe) viewer.frame(hr);
   }
 
+  clampPose(state.pose);
   $('code').value = JSON.stringify(state.pose);
   syncSliders();
 

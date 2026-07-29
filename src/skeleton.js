@@ -67,13 +67,21 @@ P.headDist   = 1.22;
 export const HEAD_TILT_MAX = 30;
 
 /**
- * 關節活動範圍。
- * 髖關節往後（負值）刻意壓在 −40° 以內：人體的髖伸展本來就只有 20~30 度，
- * 而且一旦大幅後擺，大腿會從軀幹「背面」穿出來，形成一塊突兀的圓凸。
+ * 關節活動範圍。有兩個刻意收緊的地方：
+ *
+ * hipPitch 下限 −40°：人體髖伸展本來就只有 20~30 度，再大會讓大腿從軀幹背面穿出。
+ *
+ * waistPitch 上限 +20°：腰往前彎會把軀幹下半部轉到大腿上方，兩者互相穿插，
+ * 背面就冒出一塊圓凸。實測凸起量幾乎只由這個角度決定（10° 以內為 0、
+ * 20° 約 0.35 mm、40° 約 1.0 mm，以 30 mm 成品計）。往後仰則完全沒有這個問題。
  */
 export const LIMITS = {
-  armPitch: [-180, 180], armOut: [-25, 120],  elbow: [0, 150],
-  hipPitch: [-40, 135],  hipOut: [-15, 90],   knee:  [0, 150]
+  rootPitch:  [-180, 180], rootRoll:  [-180, 180],
+  waistPitch: [-45, 20],   waistTwist: [-50, 50],
+  headPitch:  [-HEAD_TILT_MAX, HEAD_TILT_MAX],
+  headRoll:   [-HEAD_TILT_MAX, HEAD_TILT_MAX],
+  armPitch: [-180, 180], armOut: [-25, 120], armTwist: [-180, 180], elbow: [0, 150],
+  hipPitch: [-40, 135],  hipOut: [-15, 90],  knee:  [0, 150]
 };
 
 /** 站姿全高（以頭半徑為單位） */
@@ -115,15 +123,28 @@ export const KEYS = [
 export const LR_KEYS = ['armPitch', 'armOut', 'armTwist', 'elbow', 'hipPitch', 'hipOut', 'knee'];
 
 export const emptyPose = () => KEYS.reduce((o, k) => (o[k] = 0, o), {});
-export const clonePose = src => KEYS.reduce((o, k) => (o[k] = (src && k in src) ? +src[k] : 0, o), {});
+
+/** 把所有欄位收進活動範圍內。預設動作、貼上的姿勢代碼都會經過這裡 */
+export function clampPose(pose) {
+  for (const k of KEYS) {
+    const lim = LIMITS[/[LR]$/.test(k) ? k.slice(0, -1) : k];
+    if (lim) pose[k] = clamp(pose[k], lim[0], lim[1]);
+  }
+  return pose;
+}
+export const clonePose = src => clampPose(KEYS.reduce((o, k) => (o[k] = (src && k in src) ? +src[k] : 0, o), {}));
 
 /**
  * 正向運動學
  * @returns {{joints:Object, parts:Array}} joints 供拖拉反解使用；parts 供繪製與建模
  */
 export function fk(pose) {
-  const Mroot  = rotM(pose.rootPitch, pose.rootRoll, 0);
-  const Mwaist = mul(Mroot, rotM(pose.waistPitch, 0, pose.waistTwist));
+  // rootPitch / waistPitch 取負號。
+  // 四肢預設朝下(−Z)，正的 Rx 會把它們往前(+Y)擺；
+  // 但軀幹與頭是朝上(+Z)的，同樣的正 Rx 反而會把它們往後倒。
+  // 為了讓「全身前傾」「腰・前彎」這兩根滑桿的正值真的是往前，這裡先取負。
+  const Mroot  = rotM(-pose.rootPitch, pose.rootRoll, 0);
+  const Mwaist = mul(Mroot, rotM(-pose.waistPitch, 0, pose.waistTwist));
 
   const J = { Mroot, Mwaist };
   J.pelvis    = [0, 0, 0];
