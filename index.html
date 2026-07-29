@@ -59,6 +59,8 @@
   @media(min-width:1200px){#sliders{grid-template-columns:1fr 1fr 1fr}}
   .sl input{width:100%}
   .sl b{text-align:right;font-variant-numeric:tabular-nums;color:var(--sub);font-weight:600}
+  .cols2{display:grid;gap:12px 24px;grid-template-columns:1fr}
+  @media(min-width:900px){.cols2{grid-template-columns:1fr 1.1fr}}
   .grid2{display:grid;gap:0 22px;grid-template-columns:1fr}
   @media(min-width:640px){.grid2{grid-template-columns:1fr 1fr}}
   @media(min-width:1200px){.grid2{grid-template-columns:2.4fr 1fr}}
@@ -162,34 +164,39 @@
 </div>
 
 <div class="card">
-  <div class="sec">匯出</div>
-  <div class="row">
-    <button class="primary" id="btnExport">匯出 STL</button>
-    <label class="cb">品質
-      <select id="quality" title="容許的表面誤差，分段數會依模型大小自動調整">
-        <option value="0.1" data-floor="24">一般</option>
-        <option value="0.05" data-floor="40" selected>精細</option>
-        <option value="0.02" data-floor="64">最高</option>
-      </select>
-    </label>
-  </div>
-  <p class="note" id="exportInfo">模型會自動置中並貼齊列印平台。各部位是重疊的獨立實體，切片軟體會自動聯集，屬正常情形。</p>
-
-  <div class="sec" style="margin-top:14px">分享</div>
-  <div class="row">
-    <input type="text" id="shareUrl" class="urlbox" readonly spellcheck="false">
-    <button id="btnShare">複製連結</button>
-  </div>
-  <p class="note">把連結傳給別人，打開就是同一個姿勢，連頭部直徑與底座設定都一起帶過去。</p>
-
-  <details>
-    <summary>姿勢代碼（貼進其他工具用）</summary>
-    <textarea id="code" spellcheck="false"></textarea>
-    <div class="row" style="margin-top:6px">
-      <button id="btnCopy">複製</button>
-      <button id="btnLoad">讀入</button>
+  <div class="cols2">
+    <div>
+      <div class="sec">匯出</div>
+      <div class="row">
+        <button class="primary" id="btnExport">匯出 STL</button>
+        <label class="cb">品質
+          <select id="quality" title="容許的表面誤差，分段數會依模型大小自動調整">
+            <option value="0.1" data-floor="24">一般</option>
+            <option value="0.05" data-floor="40" selected>精細</option>
+            <option value="0.02" data-floor="64">最高</option>
+          </select>
+        </label>
+      </div>
+      <p class="note" id="exportInfo">模型會自動置中並貼齊列印平台。各部位是重疊的獨立實體，切片軟體會自動聯集，屬正常情形。</p>
     </div>
-  </details>
+
+    <div>
+      <div class="sec">分享</div>
+      <div class="row">
+        <input type="text" id="shareUrl" class="urlbox" readonly spellcheck="false">
+        <button id="btnShare">複製連結</button>
+      </div>
+      <p class="note">把連結傳給別人，打開就是同一個姿勢，連頭部直徑與底座設定都一起帶過去。</p>
+      <details>
+        <summary>姿勢代碼（貼進其他工具用）</summary>
+        <textarea id="code" spellcheck="false"></textarea>
+        <div class="row" style="margin-top:6px">
+          <button id="btnCopy">複製</button>
+          <button id="btnLoad">讀入</button>
+        </div>
+      </details>
+    </div>
+  </div>
 </div>
 
 <div id="loadError" class="loadError">
@@ -229,6 +236,6 @@
   }, 4000);
 })();
 </script>
-<script type="module" src="./src/main.js?v=1.6.0"></script>
+<script type="module" src="./src/main.js?v=1.7.0"></script>
 </body>
 </html>

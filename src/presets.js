@@ -26,14 +26,14 @@ export const PRESETS = {
     armPitchR: 10, armOutR: 8, elbowR: 25
   },
   // 趴：rootPitch 為正代表整體往前傾，臉朝下。
-  // 軀幹幾乎放平貼地，小腿往上折；舊值髖屈到 80°，
-  // 變成跪著把臀部高高翹起（臀高 9.4 mm），與「趴伏」不符。
+  // 這組數值由實際拖曳調出：頭低到極限(30°)貼地、手肘全折收在身側、
+  // 雙腿外展 24° 攤平。總高只有 8.6 mm（30 mm 成品），接觸面大、最好印。
   '05 趴伏': {
-    rootPitch: 88, waistPitch: -5, headPitch: 20,
-    hipPitchL: 10, kneeL: 150, hipOutL: 11,
-    hipPitchR: 10, kneeR: 150, hipOutR: 11,
-    armPitchL: -50, armOutL: 13, elbowL: 105,
-    armPitchR: -50, armOutR: 13, elbowR: 105
+    rootPitch: 85, waistPitch: -5, headPitch: 30,
+    armPitchL: 13, armOutL: 13, elbowL: 150,
+    hipPitchL: 7, hipOutL: 24, kneeL: 150,
+    armPitchR: 13, armOutR: 13, elbowR: 150,
+    hipPitchR: 7, hipOutR: 24, kneeR: 150
   },
   '06 仰躺': {
     rootPitch: -90, headPitch: 12,
