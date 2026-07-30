@@ -76,6 +76,9 @@ P.headPivotZ = P.torsoH - 0.50;
 P.headDist   = 1.35;
 export const HEAD_TILT_MAX = 45;
 
+/** 肩關節往後伸展的上限（度）。人體約 50~60 */
+export const SHOULDER_EXTENSION_MAX = 60;
+
 /**
  * 關節活動範圍，依人體實際可動範圍（ROM）設定，數值取臨床常用區間的寬端。
  *
@@ -145,13 +148,81 @@ export const LR_KEYS = ['armPitch', 'armOut', 'armTwist', 'elbow', 'hipPitch', '
 
 export const emptyPose = () => KEYS.reduce((o, k) => (o[k] = 0, o), {});
 
-/** 把所有欄位收進活動範圍內。預設動作、貼上的姿勢代碼都會經過這裡 */
+/**
+ * 肩關節的可及方向不是「前後擺 × 外展」兩個獨立區間，而是球面上的一塊區域。
+ * 往前、往側都可以一路舉到頭頂（180°），但往後只能伸展約 60°。
+ * 用兩個區間分別限制等於畫了一個方盒，會放行「同時後伸 60° 又外展 179°」
+ * 這種算出來手臂指向正後上方的組合——人體做不到。
+ *
+ * 這裡直接限制方向本身：以「離正下方的仰角 θ」與「方位角 φ」表示，
+ *   φ = 0 為正前、90 為正側、180 為正後
+ *   θ 上限 = φ ≤ 90 時 180；φ 從 90 到 180 之間，由 180 線性收到 60
+ *
+ * @param {number[]} v 軀幹座標系下的上臂單位方向
+ * @returns {number[]} 修正後的方向（未超出時原樣回傳同一個陣列）
+ */
+export function clampArmSwing(v) {
+  if (Math.hypot(v[0], v[1]) < 1e-9) return v;        // 正上或正下，沒有方位可言
+  const theta = deg(Math.acos(clamp(-v[2], -1, 1)));
+  const azRad = Math.atan2(v[0], v[1]);
+  const az = Math.abs(deg(azRad));
+  const thetaMax = az <= 90
+    ? 180
+    : 180 - (180 - SHOULDER_EXTENSION_MAX) * (az - 90) / 90;
+  if (theta <= thetaMax) return v;
+  const t = thetaMax * D, s = Math.sin(t);
+  return [s * Math.sin(azRad), s * Math.cos(azRad), -Math.cos(t)];
+}
+
+const wrap180 = a => ((a + 180) % 360 + 360) % 360 - 180;
+
+/** 把所有欄位收進活動範圍內。預設動作、拖曳結果、貼上的姿勢代碼都會經過這裡 */
 export function clampPose(pose) {
   for (const k of KEYS) {
     const lim = LIMITS[/[LR]$/.test(k) ? k.slice(0, -1) : k];
     if (lim) pose[k] = clamp(pose[k], lim[0], lim[1]);
   }
+
+  // 逐一檢查兩隻手臂的指向是否落在肩關節可及的區域內
+  for (const side of ['L', 'R']) {
+    const sx = side === 'L' ? -1 : 1;
+    const p = pose['armPitch' + side] * D;
+    const o = -sx * pose['armOut' + side] * D;
+    const v = [-Math.cos(p) * Math.sin(o), Math.sin(p), -Math.cos(p) * Math.cos(o)];
+    const c = clampArmSwing(v);
+    if (c === v) continue;
+
+    // 同一個方向有兩組等價的 (前後擺, 外展)：(p, o) 與 (180−p, o+180)。
+    // 不能只比參數距離——比較近的那支可能一套上角度上限就被砍歪。
+    // 所以兩支都先套限制，再比「實際得到的方向」離目標多遠。
+    const pA = deg(Math.asin(clamp(c[1], -1, 1)));
+    const oA = deg(Math.atan2(-c[0], -c[2]));
+    const dirOf = (p2, o2) => {
+      const pc = clamp(p2, LIMITS.armPitch[0], LIMITS.armPitch[1]) * D;
+      const oc = -sx * clamp(-o2 * sx, LIMITS.armOut[0], LIMITS.armOut[1]) * D;
+      return [-Math.cos(pc) * Math.sin(oc), Math.sin(pc), -Math.cos(pc) * Math.cos(oc)];
+    };
+    const err = (p2, o2) => {
+      const d = dirOf(p2, o2);
+      return Math.hypot(d[0] - c[0], d[1] - c[1], d[2] - c[2]);
+    };
+    const cand = [[pA, oA], [wrap180(180 - pA), wrap180(oA + 180)]];
+    const [pf, of_] = err(...cand[0]) <= err(...cand[1]) ? cand[0] : cand[1];
+
+    pose['armPitch' + side] = clamp(pf, LIMITS.armPitch[0], LIMITS.armPitch[1]);
+    pose['armOut' + side] = clamp(-of_ * sx, LIMITS.armOut[0], LIMITS.armOut[1]);
+  }
   return pose;
+}
+
+/**
+ * 關節陷入軀幹或頭部的深度（正值＝在裡面多深）。
+ * 拖曳時用來否決「把手拖進身體裡」這種結果。
+ */
+export function bodyPenetration(joints, key) {
+  const t = torsoSDF(ap(tp(joints.Mwaist), joints[key]));
+  const h = Math.hypot(...sub(joints[key], joints.head)) - P.headR;
+  return -Math.min(t, h);
 }
 export const clonePose = src => clampPose(KEYS.reduce((o, k) => (o[k] = (src && k in src) ? +src[k] : 0, o), {}));
 

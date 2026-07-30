@@ -254,6 +254,62 @@ console.log('\n【反解往返】')
   check('頭部傾角受限制', over===0, `超出 ${over}`)
 }
 
+console.log('\n【肩關節可及方向】')
+{
+  // 手臂方向以「離正下方的仰角 θ」「方位角 φ」表示，φ=0 前、90 側、180 後
+  const swing = (pose, side) => {
+    const { joints: J } = SK.fk(pose)
+    const v = SK.ap(SK.tp(J.Mwaist), SK.norm(SK.sub(J['elbow' + side], J['shoulder' + side])))
+    const theta = Math.acos(SK.clamp(-v[2], -1, 1)) * 180 / Math.PI
+    const az = Math.abs(Math.atan2(v[0], v[1]) * 180 / Math.PI)
+    const max = az <= 90 ? 180 : 180 - (180 - SK.SHOULDER_EXTENSION_MAX) * (az - 90) / 90
+    return { theta, az, max, ok: theta <= max + 0.6 }
+  }
+  // 使用者實際回報的那組不合理姿勢
+  const bad = SK.KEYS.reduce((o, k) => (o[k] = 0, o), {})
+  bad.armPitchL = -60; bad.armOutL = 179
+  const before = swing(bad, 'L')
+  check('未修正時確實抓得到違規', !before.ok, `仰角 ${before.theta.toFixed(0)}° 方位 ${before.az.toFixed(0)}° 上限 ${before.max.toFixed(0)}°`)
+  const after = swing(SK.clampPose(bad), 'L')
+  check('clampPose 修回可及範圍內', after.ok, `修正後 仰角 ${after.theta.toFixed(0)}° 上限 ${after.max.toFixed(0)}°`)
+
+  for (const [n, pre] of Object.entries(PRESETS))
+    check(`${n.padEnd(10)} 手臂方向合乎人體`, ['L','R'].every(s => swing(SK.clonePose(pre), s).ok))
+
+  // 任意輸入都必須被修回合法
+  let bad2 = 0
+  for (let i = 0; i < 20000; i++) {
+    const p = SK.KEYS.reduce((o, k) => (o[k] = 0, o), {})
+    p.armPitchL = Math.random()*360-180; p.armOutL = Math.random()*360-180
+    p.armPitchR = Math.random()*360-180; p.armOutR = Math.random()*360-180
+    SK.clampPose(p)
+    if (!swing(p,'L').ok || !swing(p,'R').ok) bad2++
+  }
+  check('任意角度經 clampPose 後皆合法', bad2 === 0, `20000 組，違規 ${bad2}`)
+}
+
+console.log('\n【不能把關節拖進身體裡】')
+{
+  const depth = (pose, key) => SK.bodyPenetration(SK.fk(pose).joints, key)
+  // 使用者回報的姿勢：右手肘完全埋進軀幹
+  const bad = SK.clonePose({ armPitchR: 1, armOutR: -30, armTwistR: 90, elbowR: 60 })
+  check('偵測得到手肘被身體吞掉', depth(bad, 'elbowR') > P.armR,
+        `陷入 ${depth(bad,'elbowR').toFixed(2)}，手臂半徑 ${P.armR}`)
+  // 正常姿勢不能誤判
+  let worst = 0, who = ''
+  for (const [n, pre] of Object.entries(PRESETS)) {
+    const pose = SK.clonePose(pre)
+    for (const [k, r] of [['handL', P.armR*P.foreScale], ['elbowL', P.armR],
+                          ['handR', P.armR*P.foreScale], ['elbowR', P.armR],
+                          ['footL', P.legR*P.foreScale], ['kneeL', P.legR],
+                          ['footR', P.legR*P.foreScale], ['kneeR', P.legR]]) {
+      const ratio = depth(pose, k) / r
+      if (ratio > worst) { worst = ratio; who = `${n} ${k}` }
+    }
+  }
+  check('八款預設都不會被誤判', worst < 0.8, `最深為自身半徑的 ${(worst*100).toFixed(0)}%（${who}）`)
+}
+
 console.log('\n【手掌拖曳：扭轉與彎曲一起解】')
 {
   // 給定任意 (扭轉, 彎曲)，算出前臂方向後反解，必須完全還原

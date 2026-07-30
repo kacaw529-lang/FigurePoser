@@ -9,7 +9,7 @@
  */
 import {
   fk, solve2, solve1, solveHead, centerOfMass, extremes,
-  sub, clamp, ap, P, LR_KEYS, LIMITS, solveArmHand
+  sub, clamp, ap, P, LR_KEYS, LIMITS, solveArmHand, clampPose, bodyPenetration
 } from './skeleton.js';
 
 /**
@@ -25,6 +25,14 @@ const HANDLES = [
   { key: 'kneeR', side: 'R', type: 'leg2' }, { key: 'footR', side: 'R', type: 'leg1' },
   { key: 'head', side: 'C', type: 'head' }
 ];
+
+/** 拖曳的關節與其半徑、對應的關節座標鍵。用於「別把手拖進身體裡」的否決 */
+const VETO = {
+  arm2: [j => 'elbow' + j, () => P.armR],
+  arm1: [j => 'hand' + j,  () => P.armR * P.foreScale],
+  leg2: [j => 'knee' + j,  () => P.legR],
+  leg1: [j => 'foot' + j,  () => P.legR * P.foreScale]
+};
 
 const COL = {
   L: '#3f86bd', R: '#d1673f', C: '#8a7d6d',
@@ -167,6 +175,14 @@ export class Editor2D {
 
     const lim = (key, v) => Math.round(clamp(v, LIMITS[key][0], LIMITS[key][1]));
 
+    // 先記下會被改動的欄位與目前的陷入深度，必要時可以整組退回
+    const vetoDef = VETO[h.type];
+    const before = { values: {}, depth: -Infinity };
+    if (vetoDef) {
+      for (const k of LR_KEYS) for (const t of ['L', 'R']) before.values[k + t] = pose[k + t];
+      before.depth = bodyPenetration(J, vetoDef[0](s));
+    }
+
     if (h.type === 'arm2') {
       const r = solve2(J.Mwaist, sub(target, J['shoulder' + s]), sx);
       pose['armPitch' + s] = lim('armPitch', r.pitch);
@@ -189,6 +205,19 @@ export class Editor2D {
     }
 
     if (mir && s !== 'C') LR_KEYS.forEach(k => { pose[k + other] = pose[k + s]; });
+
+    // 肩關節的可及方向不是方盒，交給 clampPose 把不合人體的組合修回來
+    clampPose(pose);
+
+    // 若這一步把關節整顆推進身體內部，就退回上一個狀態。
+    // 只有「變得更深」才否決，這樣即使目前已經卡在裡面也拖得出來。
+    const veto = VETO[h.type];
+    if (veto) {
+      const key = veto[0](s), radius = veto[1]();
+      const after = bodyPenetration(fk(pose).joints, key);
+      if (after > radius && after > before.depth) Object.assign(pose, before.values);
+    }
+
     this.onChange();
   }
 

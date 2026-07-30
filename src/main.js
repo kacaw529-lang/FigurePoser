@@ -14,7 +14,7 @@ import { analysePrintability } from './printability.js';
  * 更新網站後若看不出變化，先確認這裡的號碼有沒有跟著變——
  * GitHub Pages 對 JS 檔會快取十分鐘，多半是瀏覽器還在用舊檔，按 Ctrl+Shift+R 即可。
  */
-const VERSION = 'v1.16.0';
+const VERSION = 'v1.17.0';
 
 const $ = id => document.getElementById(id);
 $('ver').textContent = VERSION;
@@ -307,6 +307,7 @@ function updatePrintability(force = false) {
 
 // ── 主更新 ───────────────────────────────────────────────
 function refresh(reframe = false) {
+  clampPose(state.pose);   // 先收進可動範圍，畫出來的才是最終姿勢
   // 先算出要標虛線的肢體，再畫圖；被節流跳過時沿用上一次的結果
   if (!updatePrintability()) {
     clearTimeout(printTimer);
@@ -322,7 +323,6 @@ function refresh(reframe = false) {
     if (reframe) viewer.frame(hr);
   }
 
-  clampPose(state.pose);
   $('code').value = JSON.stringify(state.pose);
   $('shareUrl').value = shareURL(state, window.location);
   scheduleHashWrite();
