@@ -22,10 +22,20 @@ check('頭球底部埋入軀幹',      P.headPivotZ + P.headDist - P.headR < P.t
 check('髖球未穿出軀幹底面',    P.hipZ - P.legR >= 0, `餘裕 ${(P.hipZ-P.legR).toFixed(3)}`)
 check('髖球未穿出軀幹側面',    P.hipX + P.legR <= P.torsoW/2, `餘裕 ${(P.torsoW/2-P.hipX-P.legR).toFixed(3)}`)
 {
-  const pose = SK.clonePose(null); pose.headPitch = SK.HEAD_TILT_MAX
-  const J = SK.fk(pose).joints
-  check('頭傾到極限仍埋入軀幹', J.head[2]-P.headR < P.torsoH && Math.abs(J.head[1]) < P.torsoD/2,
-        `頭底 ${(J.head[2]-P.headR).toFixed(2)} < ${P.torsoH}`)
+  // 頭部傾到錐角極限時，仍必須與軀幹保有足夠粗的交界（無脖子設計，靠重疊相連）
+  let worst = Infinity, at = '';
+  for (const [p, r] of [[1,0],[-1,0],[0,1],[0,-1],[0.707,0.707],[-0.707,0.707]]) {
+    const pose = SK.clonePose(null);
+    pose.headPitch = SK.HEAD_TILT_MAX * p;
+    pose.headRoll  = SK.HEAD_TILT_MAX * r;
+    const { joints: J } = SK.fk(pose);
+    const sd = SK.torsoSDF(SK.ap(SK.tp(J.Mwaist), J.head));
+    const neck = 2 * Math.sqrt(Math.max(0, P.headR ** 2 - sd ** 2)) * 3.1;
+    if (sd >= P.headR) { worst = 0; at = `傾角 ${SK.HEAD_TILT_MAX}° 方向(${p},${r}) 已脫離`; break; }
+    if (neck < worst) { worst = neck; at = `方向(${p},${r})`; }
+  }
+  check(`頭傾到 ±${SK.HEAD_TILT_MAX}° 仍與軀幹相連`, worst > 2.5,
+        `最細交界 ${worst.toFixed(2)} mm（30 mm 成品）@ ${at}`);
 }
 
 console.log('\n【前後方向】')
@@ -50,6 +60,25 @@ console.log('\n【前後方向】')
     check(`${name} 臉朝${dir === 'down' ? '下' : '上'}`,
           dir === 'down' ? f < -0.5 : f > 0.5, `臉 z=${f.toFixed(2)}`)
   }
+}
+
+console.log('\n【身體比例】')
+{
+  const H = SK.STANDING_H;
+  // 成人實測（Drillis & Contini）佔身高的比例
+  const ADULT = { upArm: 0.186, loArm: 0.146, upLeg: 0.245, loLeg: 0.246, torsoW: 0.259 };
+  // 前臂／上臂的比值不受大頭 Q 版風格影響，可直接與成人對照
+  check('前臂／上臂符合成人比例',
+        Math.abs((P.loArm / P.upArm) / (ADULT.loArm / ADULT.upArm) - 1) < 0.06,
+        `${(P.loArm / P.upArm).toFixed(3)} vs 成人 ${(ADULT.loArm / ADULT.upArm).toFixed(3)}`);
+  check('上肢全長接近成人比例',
+        Math.abs(((P.upArm + P.loArm) / H) / (ADULT.upArm + ADULT.loArm) - 1) < 0.08,
+        `${((P.upArm + P.loArm) / H).toFixed(3)} vs 成人 ${(ADULT.upArm + ADULT.loArm).toFixed(3)}`);
+  check('下肢全長接近成人比例',
+        Math.abs(((P.upLeg + P.loLeg) / H) / (ADULT.upLeg + ADULT.loLeg) - 1) < 0.08,
+        `${((P.upLeg + P.loLeg) / H).toFixed(3)} vs 成人 ${(ADULT.upLeg + ADULT.loLeg).toFixed(3)}`);
+  // 頭與軀幹刻意放大，是 Q 版風格的來源，這裡只確認它確實仍是 Q 版
+  check('維持 Q 版頭身比', H / 2 > 4.3 && H / 2 < 5.6, `${(H / 2).toFixed(2)} 個頭高（成人約 7.5）`);
 }
 
 console.log('\n【接縫平滑度】')
@@ -317,12 +346,35 @@ console.log('\n【列印可行性】')
   // 預設動作是給學生的起點，不該一開始就要開支撐
   {
     const heavy = Object.entries(PRESETS).filter(([, pre]) => A(pre).level === 'heavy');
-    check('僅 02 雙手歡呼允許判為需要支撐',
-          heavy.length === 1 && heavy[0][0].startsWith('02'),
-          heavy.map(([n]) => n).join('、') || '無');
-    for (const n of ['07 側躺', '08 大字型'])
-      check(`${n.padEnd(10)} 已調整為免支撐`, A(PRESETS[n]).level === 'none',
-            `${A(PRESETS[n]).area.toFixed(1)} mm²`);
+    check('沒有任何預設需要支撐', heavy.length === 0, heavy.map(([n]) => n).join('、') || '無');
+    for (const [n, pre] of Object.entries(PRESETS))
+      check(`${n.padEnd(10)} 以目前姿態可直接列印`, A(pre).level !== 'heavy',
+            `${A(pre).area.toFixed(1)} mm²`);
+    // 外展上限要能讓上臂舉到 45° 以上，否則免支撐的歡呼動作擺不出來
+    const maxElev = Math.asin(Math.abs(-Math.cos(SK.LIMITS.armOut[1] * Math.PI / 180))) * 180 / Math.PI;
+    check('外展上限足以讓上臂超過 45°', SK.LIMITS.armOut[1] >= 135,
+          `上限 ${SK.LIMITS.armOut[1]}° → 上臂最高仰角 ${maxElev.toFixed(0)}°`);
+  }
+
+  console.log('\n【關節範圍是否符合人體 ROM】');
+  {
+    // 臨床常用區間的寬端。誤差 ±15° 內視為相符（各家量測標準略有差異）
+    const ROM = {
+      armPitch:   [-60, 180], armOut: [-40, 180], armTwist: [-90, 90], elbow: [0, 150],
+      hipPitch:   [-30, 130], hipOut: [-30, 50],  knee:  [0, 150],
+      waistPitch: [-30, 80],  waistTwist: [-45, 45]
+    };
+    for (const [k, [lo, hi]] of Object.entries(ROM)) {
+      const cur = SK.LIMITS[k];
+      check(`${k.padEnd(11)} 符合人體可動範圍`,
+            Math.abs(cur[0] - lo) <= 15 && Math.abs(cur[1] - hi) <= 15,
+            `目前 [${cur}]，參考 [${lo}, ${hi}]`);
+    }
+    check('頭部錐角接近頸部可動範圍', SK.HEAD_TILT_MAX >= 40 && SK.HEAD_TILT_MAX <= 50,
+          `${SK.HEAD_TILT_MAX}°，頸部前彎 50 / 側彎 45`);
+    // 扭轉超過 ±90 會讓手肘往反方向折，屬於人體做不到的動作
+    check('臂・扭轉不超過 ±90（避免手肘反折）', Math.abs(SK.LIMITS.armTwist[0]) <= 90 && SK.LIMITS.armTwist[1] <= 90);
+    check('整體擺放方向保留完整 360°', SK.LIMITS.rootPitch[1] === 180 && SK.LIMITS.rootRoll[1] === 180);
   }
 }
 
@@ -423,8 +475,10 @@ console.log('\n【UI 串接】')
   // 列印難度提示條
   ;[...$('presetRow').children].find(b => b.dataset.name.startsWith('03')).click()
   check('直立時提示條為綠色', $('printability').className.includes('ok'), $('printability').textContent)
-  ;[...$('presetRow').children].find(b => b.dataset.name.startsWith('02')).click()
-  check('雙手歡呼時提示條轉紅', $('printability').className.includes('bad'), $('printability').textContent)
+  // 八款預設現在都免支撐，所以改用一個手平舉的自訂姿勢來驗證紅燈與虛線
+  Object.assign(window.__poser.state.pose, SK.clonePose({ armOutL: 90, armOutR: 90 }))
+  window.__poser.refresh()
+  check('手平舉時提示條轉紅', $('printability').className.includes('bad'), $('printability').textContent)
   check('紅色時會標出懸空肢體', window.__poser.editor.highlight.size > 0,
         [...window.__poser.editor.highlight].join(','))
   ;[...$('presetRow').children].find(b => b.dataset.name.startsWith('06')).click()

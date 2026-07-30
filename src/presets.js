@@ -5,13 +5,19 @@
 export const PRESETS = {
   // 手掌要真的碰到頭（距頭心 0.86，頭半徑 1，略為融接），手肘朝上前方張開。
   // 舊值的手掌浮在頭上方 1.46 處、手肘還交叉到中線，看起來像「雙手抱在頭頂上方」。
+  // 前臂縮短後重配。手肘往兩側張到 x=1.61（肩在 0.97），手掌落在頭頂、
+  // 距頭心 0.78（頭半徑 1）略為融接。舊值的手肘在 x=0.97，等於沒張開。
   '01 舉手抱頭': {
-    armPitchL: 155, armOutL: 0, armTwistL: -30, elbowL: 105,
-    armPitchR: 155, armOutR: 0, armTwistR: -30, elbowR: 105
+    armPitchL: 170, armOutL: -20, armTwistL: -80, elbowL: 90,
+    armPitchR: 170, armOutR: -20, armTwistR: -80, elbowR: 90
   },
+  // 上臂外展 150° → 仰角 60°，前臂再折 60° 也維持 60°，兩段都超過 45° 自撐門檻，
+  // 以目前姿態列印不需要支撐。
+  // 舊值外展 90°（上臂水平的「球門柱」造型）仰角是 0°，必然要支撐——
+  // 那個剪影本身就與免支撐互斥，只能取捨。
   '02 雙手歡呼': {
-    armPitchL: 0, armOutL: 90, armTwistL: 90, elbowL: 90,
-    armPitchR: 0, armOutR: 90, armTwistR: 90, elbowR: 90
+    armPitchL: 0, armOutL: 150, armTwistL: 90, elbowL: 60,
+    armPitchR: 0, armOutR: 150, armTwistR: 90, elbowR: 60
   },
   '03 直立': {
     armOutL: 7, armOutR: 7, hipOutL: 3, hipOutR: 3
