@@ -9,7 +9,7 @@
  */
 import {
   fk, solve2, solve1, solveHead, centerOfMass, extremes,
-  sub, clamp, ap, P, LR_KEYS, LIMITS
+  sub, clamp, ap, P, LR_KEYS, LIMITS, solveArmHand
 } from './skeleton.js';
 
 /**
@@ -172,7 +172,10 @@ export class Editor2D {
       pose['armPitch' + s] = lim('armPitch', r.pitch);
       pose['armOut' + s] = lim('armOut', r.out);
     } else if (h.type === 'arm1') {
-      pose['elbow' + s] = lim('elbow', solve1(J['Mup' + s], sub(target, J['elbow' + s])));
+      // 手掌同時決定扭轉與彎曲，前臂才會真的指向拖曳的位置
+      const r = solveArmHand(J['Mup' + s], pose['armTwist' + s], sub(target, J['elbow' + s]), sx);
+      pose['armTwist' + s] = lim('armTwist', r.twist);
+      pose['elbow' + s] = lim('elbow', r.elbow);
     } else if (h.type === 'leg2') {
       const r = solve2(J.Mroot, sub(target, J['hip' + s]), sx);
       pose['hipPitch' + s] = lim('hipPitch', r.pitch);

@@ -231,6 +231,35 @@ export function solve2(Mparent, dirWorld, sx) {
     out: -deg(Math.atan2(-v[0], -v[2])) * sx
   };
 }
+/**
+ * 手掌拖曳：同時解出「臂・扭轉」與「肘・彎曲」，讓前臂直接指向目標。
+ *
+ * 只解手肘的話，前臂只能在「既有扭轉所決定的那個平面」上繞圈。
+ * 若扭轉是先前擺別的姿勢留下來的，那個平面就是歪的，
+ * 拖出來的結果會像手肘往側面或反方向折——也就是看起來不合理的關節角度。
+ *
+ * 推導：上臂座標系 M_up = A · Rz(t)，其中 A 是扭轉之前的參考系。
+ * 前臂方向 = A · Rz(t) · Rx(e) · (0,0,−1) = A · (−sin e·sin t, sin e·cos t, −cos e)
+ * 因此把目標方向換算到 A 之下得到 u 後：
+ *   e = acos(−u_z)              （與扭轉無關）
+ *   t = atan2(−u_x, u_y)
+ *
+ * @param {number[][]} Mup 目前的上臂座標系
+ * @param {number} currentTwist 目前的 armTwist 參數值
+ * @param {number[]} dirWorld 從手肘指向目標的世界座標方向
+ * @param {number} sx 左為 −1、右為 +1
+ */
+export function solveArmHand(Mup, currentTwist, dirWorld, sx) {
+  const applied = -sx * currentTwist;                       // 實際套用在矩陣裡的扭轉
+  const A = mul(Mup, Rz(-applied * D));                     // 扣掉扭轉，取回參考座標系
+  const u = ap(tp(A), norm(dirWorld));
+  const elbow = deg(Math.acos(clamp(-u[2], -1, 1)));
+  const lateral = Math.hypot(u[0], u[1]);
+  // 前臂與上臂共線時扭轉無意義，維持原值避免亂跳
+  const twist = lateral < 1e-6 ? currentTwist : -deg(Math.atan2(-u[0], u[1])) * sx;
+  return { twist, elbow };
+}
+
 /** 單自由度：投影到肢體可及的圓上，回傳彎曲角 */
 export function solve1(Mparent, dirWorld) {
   const v = ap(tp(Mparent), norm(dirWorld));

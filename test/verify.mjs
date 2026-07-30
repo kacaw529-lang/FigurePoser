@@ -251,7 +251,49 @@ console.log('\n【反解往返】')
     const dir=SK.norm(SK.sub(J.head,J.headPivot))
     if(SK.deg(Math.acos(SK.clamp(dir[2],-1,1))) > SK.HEAD_TILT_MAX+1e-6) over++
   }
-  check('頭部傾角受 30° 限制', over===0, `超出 ${over}`)
+  check('頭部傾角受限制', over===0, `超出 ${over}`)
+}
+
+console.log('\n【手掌拖曳：扭轉與彎曲一起解】')
+{
+  // 給定任意 (扭轉, 彎曲)，算出前臂方向後反解，必須完全還原
+  let fail = 0, worst = 0
+  for (let i = 0; i < 8000; i++) {
+    const sx = Math.random() < 0.5 ? -1 : 1
+    const pitch = Math.random() * 240 - 60, out = Math.random() * 220 - 40
+    const twist = Math.random() * 180 - 90, elbow = Math.random() * 150
+    const Mw = SK.rotM(Math.random() * 110 - 30, 0, Math.random() * 90 - 45)
+    const Mup = SK.mul(Mw, SK.rotM(pitch, -sx * out, -sx * twist))
+    const dir = SK.ap(SK.mul(Mup, SK.Rx(elbow * Math.PI / 180)), [0, 0, -1])
+    const r = SK.solveArmHand(Mup, twist, dir, sx)
+    const Mup2 = SK.mul(Mw, SK.rotM(pitch, -sx * out, -sx * r.twist))
+    const d2 = SK.ap(SK.mul(Mup2, SK.Rx(r.elbow * Math.PI / 180)), [0, 0, -1])
+    const err = Math.hypot(dir[0] - d2[0], dir[1] - d2[1], dir[2] - d2[2])
+    worst = Math.max(worst, err)
+    if (err > 1e-9) fail++
+  }
+  check('前臂方向往返 8000 次完全還原', fail === 0, `最大誤差 ${worst.toExponential(1)}`)
+
+  // 關鍵迴歸：帶著殘留扭轉時，拖手掌必須修正扭轉而不是在歪掉的平面上繞
+  {
+    const pose = SK.clonePose({ armPitchR: 40, armOutR: 70, armTwistR: -80, elbowR: 90 })
+    const J = SK.fk(pose).joints
+    // 目標放在「正前方」——舊的做法（只解肘）到不了
+    const target = [J.elbowR[0], J.elbowR[1] + 2, J.elbowR[2]]
+    const only = SK.clamp(SK.solve1(J.MupR, SK.sub(target, J.elbowR)), 0, 150)
+    const both = SK.solveArmHand(J.MupR, pose.armTwistR, SK.sub(target, J.elbowR), 1)
+    const dirOf = (tw, eb) => {
+      const p = SK.clonePose({ armPitchR: 40, armOutR: 70, armTwistR: tw, elbowR: eb })
+      const j = SK.fk(p).joints
+      return SK.norm(SK.sub(j.handR, j.elbowR))
+    }
+    const want = SK.norm(SK.sub(target, J.elbowR))
+    const errOnly = Math.hypot(...SK.sub(dirOf(pose.armTwistR, only), want))
+    const errBoth = Math.hypot(...SK.sub(dirOf(SK.clamp(both.twist, -90, 90), SK.clamp(both.elbow, 0, 150)), want))
+    check('殘留扭轉下，同時解扭轉明顯更準',
+          errBoth < errOnly * 0.35,
+          `只解肘誤差 ${errOnly.toFixed(2)}，同時解 ${errBoth.toFixed(3)}`)
+  }
 }
 
 console.log('\n【STL 匯出】')
