@@ -39,13 +39,19 @@ export const PRESETS = {
     rootPitch: -90, headPitch: 12,
     armOutL: 12, armOutR: 12, hipOutL: 5, hipOutR: 5
   },
+  // 側傾 74° 是「夠側」與「好印」的平衡點：再側下去上方的手腳會離地而需要支撐。
+  // 上側的手腳刻意放低靠在下側身體上，讓下方射線打得到實體，支撐從 61 mm² 降到 1 mm²。
   '07 側躺': {
-    rootPitch: -90, rootRoll: 62, waistPitch: 10, headPitch: 15,
-    hipPitchL: 55, kneeL: 70, hipPitchR: 30, kneeR: 40,
-    armPitchL: 45, elbowL: 65, armPitchR: 20, elbowR: 30
+    rootPitch: -90, rootRoll: 74, waistPitch: 10, headPitch: 15,
+    hipPitchL: 25, kneeL: 50, hipPitchR: 0, kneeR: 20,
+    armPitchL: 15, elbowL: 60, armPitchR: 8, elbowR: 40
   },
+  // headPitch 12 不只是為了姿態自然。頭是整具人偶最粗的部位（直徑 6.20，
+  // 軀幹厚 4.74、四肢 4.03），躺下時會把整具人偶墊高、其餘部位懸在空中；
+  // 稍微收下巴讓頭不再頂著地，軀幹與四肢就能貼平台，支撐需求從 74 mm² 降到 0。
   '08 大字型': {
-    rootPitch: -90, armOutL: 78, armOutR: 78, hipOutL: 32, hipOutR: 32
+    rootPitch: -90, headPitch: 12,
+    armOutL: 78, armOutR: 78, hipOutL: 32, hipOutR: 32
   }
 };
 

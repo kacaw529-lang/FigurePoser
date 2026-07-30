@@ -81,6 +81,7 @@
   .statline .readout{margin-top:0}
   .stat{font-size:13px;padding:6px 11px;border-radius:9px;margin-top:0}
   .stat.ok{background:#e9f4ed;color:var(--ok)}
+  .stat.warn{background:#fbf1e2;color:#a3701f}
   .stat.bad{background:#fbeae7;color:var(--bad)}
   .readout{display:flex;flex-wrap:wrap;gap:6px 20px;font-size:13px;color:var(--sub);margin-top:8px}
   .readout b{color:var(--ink);font-variant-numeric:tabular-nums}
@@ -137,10 +138,11 @@
     <span class="dot" style="background:var(--left)"></span>左手左腳
     <span class="dot" style="background:var(--right)"></span>右手右腳
     <span class="dot" style="background:var(--sub)"></span>頭部
-    ・大圓點決定方向，小圓點決定彎曲・叉叉是重心落點
+    ・大圓點決定方向，小圓點決定彎曲・叉叉是重心落點・紅色虛線是可能需要支撐的部位
   </div>
   <div class="statline">
     <div id="stability" class="stat ok">重心穩定，站得住</div>
+    <div id="printability" class="stat ok">以目前姿態列印，應該不需要支撐</div>
     <div class="readout">
       <span>站姿全高 <b id="sizeStand">—</b></span>
       <span>目前姿勢外框 <b id="sizeBox">—</b></span>
@@ -189,7 +191,9 @@
           </select>
         </label>
       </div>
-      <p class="note" id="exportInfo">模型會自動置中並貼齊列印平台。各部位是重疊的獨立實體，切片軟體會自動聯集，屬正常情形。</p>
+      <p class="note">支撐評估是以「目前姿態直接列印」為前提。實務上常會在切片軟體裡改變擺放方向，
+    那會得到完全不同的支撐需求；實際用量也取決於切片軟體的門檻角度與支撐型式設定。</p>
+  <p class="note" id="exportInfo">模型會自動置中並貼齊列印平台。各部位是重疊的獨立實體，切片軟體會自動聯集，屬正常情形。</p>
     </div>
 
     <div>
@@ -248,6 +252,6 @@
   }, 4000);
 })();
 </script>
-<script type="module" src="./src/main.js?v=1.10.0"></script>
+<script type="module" src="./src/main.js?v=1.12.0"></script>
 </body>
 </html>

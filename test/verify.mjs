@@ -10,6 +10,7 @@ const SK = await import('../src/skeleton.js')
 const { PRESETS } = await import('../src/presets.js')
 const { exportSTL, segmentsFor } = await import('../src/stl.js')
 const SH = await import('../src/share.js')
+const PR = await import('../src/printability.js')
 
 let pass = 0, fail = 0
 const check = (name, ok, extra='') => { ok ? pass++ : fail++; console.log(`${ok?'✓':'✗'} ${name}${extra?'  '+extra:''}`) }
@@ -263,6 +264,68 @@ console.log('\n【底座】')
   check('底座三角面有被加進去', withBase.triangles > noBase.triangles)
 }
 
+console.log('\n【列印可行性】')
+{
+  const A = (pose, hd = 6.2) => PR.analysePrintability(SK.clonePose(pose), hd / 2);
+
+  // 垂直的肢體底面自己撐得住，不該被判需要支撐
+  check('直立免支撐', A(PRESETS['03 直立']).level === 'none');
+  check('仰躺免支撐', A(PRESETS['06 仰躺']).level === 'none');
+  check('雙手上舉免支撐', A({ armPitchL: 170, armPitchR: 170 }).level === 'none');
+
+  // 水平伸出且下方是空的，必須判出來
+  const tpose = A({ armOutL: 90, armOutR: 90 });
+  check('手平舉判為需要支撐', tpose.level === 'heavy', `${tpose.area.toFixed(1)} mm²`);
+  check('手平舉指出的是手臂', tpose.parts.some(p => p.key.includes('Arm')) &&
+        !tpose.parts.some(p => p.key.includes('Leg')), tpose.parts.map(p => p.name).join('、'));
+  const legUp = A({ hipPitchL: 90, kneeL: 0 });
+  check('單腳前抬指出的是腿', legUp.level === 'heavy' && legUp.parts.every(p => p.key.includes('Leg')),
+        legUp.parts.map(p => p.name).join('、'));
+
+  // 關鍵：01 的前臂幾乎水平，但它壓在頭上，射線打得到實體 → 不該算需要支撐
+  {
+    const pose = SK.clonePose(PRESETS['01 舉手抱頭']);
+    const { joints: J } = SK.fk(pose);
+    const d = [J.handR[0]-J.elbowR[0], J.handR[1]-J.elbowR[1], J.handR[2]-J.elbowR[2]];
+    const L = Math.hypot(...d);
+    const flat = Math.sqrt(Math.max(0, 1 - (d[2]/L) ** 2));
+    check('01 前臂確實接近水平', flat > 0.707, `cos(仰角) = ${flat.toFixed(2)}`);
+    check('但因為壓在頭上而免支撐', A(PRESETS['01 舉手抱頭']).level === 'none',
+          '證明往下打射線的判定有作用');
+  }
+
+  // 換尺寸時判定要一致（面積本身會隨尺寸平方成長，門檻也跟著縮放）
+  for (const name of ['03 直立', '02 雙手歡呼', '07 側躺', '08 大字型']) {
+    const levels = [4, 6.2, 10, 20, 40].map(hd => A(PRESETS[name], hd).level);
+    check(`${name.padEnd(10)} 各尺寸判定一致`, new Set(levels).size === 1, levels.join(' '));
+    const areas = [6.2, 12.4].map(hd => A(PRESETS[name], hd).area);
+    if (areas[0] > 0.1)
+      check(`${name.padEnd(10)} 面積隨尺寸平方成長`, Math.abs(areas[1] / areas[0] - 4) < 0.15,
+            `倍率 ${(areas[1] / areas[0]).toFixed(2)}（應為 4）`);
+  }
+
+  check('敘述保留「以目前姿態」前提', ['03 直立','02 雙手歡呼'].every(n => A(PRESETS[n]).label.includes('以目前姿態')),
+        A(PRESETS['03 直立']).label);
+  check('免支撐時不附加細節', A(PRESETS['03 直立']).detail === '');
+  check('需支撐時有指出部位與做法', /懸空|水平/.test(A({ armOutL: 90, armOutR: 90 }).detail));
+  {
+    const t0 = Date.now();
+    for (const pre of Object.values(PRESETS)) A(pre);
+    const dt = Date.now() - t0;
+      check('八款分析總耗時可接受', dt < 400, `${dt} ms`);
+  }
+  // 預設動作是給學生的起點，不該一開始就要開支撐
+  {
+    const heavy = Object.entries(PRESETS).filter(([, pre]) => A(pre).level === 'heavy');
+    check('僅 02 雙手歡呼允許判為需要支撐',
+          heavy.length === 1 && heavy[0][0].startsWith('02'),
+          heavy.map(([n]) => n).join('、') || '無');
+    for (const n of ['07 側躺', '08 大字型'])
+      check(`${n.padEnd(10)} 已調整為免支撐`, A(PRESETS[n]).level === 'none',
+            `${A(PRESETS[n]).area.toFixed(1)} mm²`);
+  }
+}
+
 console.log('\n【分享連結】')
 {
   for (const [name, pre] of Object.entries(PRESETS)) {
@@ -356,6 +419,16 @@ console.log('\n【UI 串接】')
   const hp = JSON.parse($('code').value).hipPitchL
   check('拖曳時髖後擺受限制', hp >= SK.LIMITS.hipPitch[0], `hipPitchL=${hp}，下限 ${SK.LIMITS.hipPitch[0]}`)
   check('分享連結欄位有填入', /#p=/.test($('shareUrl').value), $('shareUrl').value.slice(-40))
+
+  // 列印難度提示條
+  ;[...$('presetRow').children].find(b => b.dataset.name.startsWith('03')).click()
+  check('直立時提示條為綠色', $('printability').className.includes('ok'), $('printability').textContent)
+  ;[...$('presetRow').children].find(b => b.dataset.name.startsWith('02')).click()
+  check('雙手歡呼時提示條轉紅', $('printability').className.includes('bad'), $('printability').textContent)
+  check('紅色時會標出懸空肢體', window.__poser.editor.highlight.size > 0,
+        [...window.__poser.editor.highlight].join(','))
+  ;[...$('presetRow').children].find(b => b.dataset.name.startsWith('06')).click()
+  check('切回免支撐姿勢時虛線清空', window.__poser.editor.highlight.size === 0)
 
   // 微調鈕：每根滑桿左右各一顆，按一下走一格
   {

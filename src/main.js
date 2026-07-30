@@ -7,13 +7,14 @@ import { Editor2D } from './editor2d.js';
 import { Viewer3D } from './viewer3d.js';
 import { exportSTL, download } from './stl.js';
 import { encodeState, decodeState, shareURL, HEAD_MIN, HEAD_MAX } from './share.js';
+import { analysePrintability } from './printability.js';
 
 /**
  * 版本編號會顯示在標題旁邊。
  * 更新網站後若看不出變化，先確認這裡的號碼有沒有跟著變——
  * GitHub Pages 對 JS 檔會快取十分鐘，多半是瀏覽器還在用舊檔，按 Ctrl+Shift+R 即可。
  */
-const VERSION = 'v1.10.0';
+const VERSION = 'v1.12.0';
 
 const $ = id => document.getElementById(id);
 $('ver').textContent = VERSION;
@@ -277,8 +278,40 @@ $('btnExport').onclick = () => {
 
 const fmt = v => v.toFixed(1);
 
+// ── 列印難度 ─────────────────────────────────────────────
+// 單次分析在桌機約 0～30 ms，但行動裝置慢好幾倍。
+// 只在「連續拖曳中」才節流成每 120 ms 一次，停手後補算一次；
+// 按預設、拉滑桿、讀入連結這些一次性動作則立即更新，不會有延遲感。
+let printLast = 0, printTimer = null;
+function updatePrintability(force = false) {
+  const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+  if (!force && editor.drag && now - printLast < 120) {
+    clearTimeout(printTimer);
+    printTimer = setTimeout(() => updatePrintability(true), 140);
+    return false;
+  }
+  clearTimeout(printTimer);
+  printTimer = null;
+  printLast = now;
+
+  const r = analysePrintability(state.pose, headRadius());
+  const el = $('printability');
+  el.className = 'stat ' + (r.level === 'none' ? 'ok' : r.level === 'light' ? 'warn' : 'bad');
+  el.textContent = r.level === 'none'
+    ? r.label
+    : `${r.label}（約 ${r.area.toFixed(0)} mm²）　${r.detail}`;
+
+  editor.highlight = new Set(r.parts.map(p => p.key));
+  return true;
+}
+
 // ── 主更新 ───────────────────────────────────────────────
 function refresh(reframe = false) {
+  // 先算出要標虛線的肢體，再畫圖；被節流跳過時沿用上一次的結果
+  if (!updatePrintability()) {
+    clearTimeout(printTimer);
+    printTimer = setTimeout(() => { updatePrintability(true); editor.draw(); }, 140);
+  }
   const info = editor.draw();
   const hr = headRadius();
   const com = centerOfMass(fk(state.pose).joints);
@@ -322,3 +355,6 @@ layout();
 viewer?.frame(headRadius());
 
 window.__poserReady = true;   // 供 index.html 的載入失敗偵測使用
+
+// 除錯與測試用的掛勾：在瀏覽器主控台可以直接檢視目前狀態
+window.__poser = { state, editor, viewer, refresh };

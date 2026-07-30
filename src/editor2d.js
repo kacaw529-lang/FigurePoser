@@ -52,6 +52,7 @@ export class Editor2D {
     });
     this.drag = null;
     this.stable = true;
+    this.highlight = new Set();   // 需要支撐的肢體代號，會被畫成虛線提醒
     this.resize();
   }
 
@@ -216,15 +217,15 @@ export class Editor2D {
 
       const parts = [
         { a: J.pelvis, b: torsoTop(J), torso: true, c: COL.body },
-        { a: J.shoulderL, b: J.elbowL, w: P.armR * 2, c: COL.limbL },
-        { a: J.elbowL, b: J.handL, w: P.armR * 1.84, c: COL.limbL },
-        { a: J.shoulderR, b: J.elbowR, w: P.armR * 2, c: COL.limbR },
-        { a: J.elbowR, b: J.handR, w: P.armR * 1.84, c: COL.limbR },
-        { a: J.hipL, b: J.kneeL, w: P.legR * 2, c: COL.limbL },
-        { a: J.kneeL, b: J.footL, w: P.legR * 1.84, c: COL.limbL },
-        { a: J.hipR, b: J.kneeR, w: P.legR * 2, c: COL.limbR },
-        { a: J.kneeR, b: J.footR, w: P.legR * 1.84, c: COL.limbR }
-      ].filter(p => !p.skip);
+        { key: 'upArmL', a: J.shoulderL, b: J.elbowL, w: P.armR * 2, c: COL.limbL },
+        { key: 'loArmL', a: J.elbowL, b: J.handL, w: P.armR * 1.84, c: COL.limbL },
+        { key: 'upArmR', a: J.shoulderR, b: J.elbowR, w: P.armR * 2, c: COL.limbR },
+        { key: 'loArmR', a: J.elbowR, b: J.handR, w: P.armR * 1.84, c: COL.limbR },
+        { key: 'upLegL', a: J.hipL, b: J.kneeL, w: P.legR * 2, c: COL.limbL },
+        { key: 'loLegL', a: J.kneeL, b: J.footL, w: P.legR * 1.84, c: COL.limbL },
+        { key: 'upLegR', a: J.hipR, b: J.kneeR, w: P.legR * 2, c: COL.limbR },
+        { key: 'loLegR', a: J.kneeR, b: J.footR, w: P.legR * 1.84, c: COL.limbR }
+      ];
 
       parts.sort((m, n) => (v.depth(m.a) + v.depth(m.b)) - (v.depth(n.a) + v.depth(n.b)));
 
@@ -246,6 +247,17 @@ export class Editor2D {
         g.beginPath(); g.moveTo(A[0], A[1]); g.lineTo(C[0], C[1]); g.stroke();
         g.strokeStyle = pt.c; g.lineWidth = pt.w * v.scale;
         g.beginPath(); g.moveTo(A[0], A[1]); g.lineTo(C[0], C[1]); g.stroke();
+        // 需要支撐的肢體加一圈虛線輪廓，讓學生知道該拖哪一段
+        if (pt.key && this.highlight.has(pt.key)) {
+          g.save();
+          g.strokeStyle = COL.bad;
+          g.lineWidth = 1.8;
+          g.setLineDash([5, 4]);
+          g.lineCap = 'butt';
+          g.beginPath(); g.moveTo(A[0], A[1]); g.lineTo(C[0], C[1]); g.stroke();
+          g.restore();
+          g.lineCap = 'round';
+        }
       }
 
       const hd = this._toScreen(v, J.head);
