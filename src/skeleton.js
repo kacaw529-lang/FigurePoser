@@ -174,6 +174,39 @@ export function clampArmSwing(v) {
   return [s * Math.sin(azRad), s * Math.cos(azRad), -Math.cos(t)];
 }
 
+/**
+ * 內收（肢體指向身體中線）受身體本身阻擋。
+ *
+ * 肩與髖的關節點都埋在軀幹內部，所以在「正面平面上」稍微往內就會直接壓進身體：
+ * 實測肩關節內收 10° 上臂中段就陷入軀幹達自身半徑的 117%；
+ * 髖關節內收 15° 兩條大腿幾乎完全重合。
+ *
+ * 但人體確實能把手抱在胸前、坐著盤腿——關鍵是那些動作同時把肢體往前（或往後）擺開，
+ * 離開了正面平面。因此這裡的規則是：**往內的分量上限，隨「往前後擺開的程度」放寬**。
+ *
+ * @param {number[]} v 軀幹座標下的肢體方向
+ * @param {number} sx 左為 −1、右為 +1
+ * @param {number} k 放寬係數（手臂較寬鬆，腿較嚴）
+ */
+export function clampInward(v, sx, k) {
+  let out = v;
+  // 壓低往內分量後，前後分量會等比放大、上限跟著變寬，故迭代兩次收斂
+  for (let i = 0; i < 2; i++) {
+    const din = -sx * out[0];
+    const allow = Math.abs(out[1]) * k;
+    if (allow >= 1 || din <= allow) break;
+    const rest = Math.hypot(out[1], out[2]);
+    const scale = rest > 1e-9 ? Math.sqrt(Math.max(0, 1 - allow * allow)) / rest : 0;
+    out = [-sx * allow, out[1] * scale, out[2] * scale];
+  }
+  return out;
+}
+
+/** 手臂：往後受肩關節伸展上限、往內受軀幹阻擋 */
+export const clampArmDir = (v, sx) => clampInward(clampArmSwing(v), sx, 1.2);
+/** 腿：往內受另一條腿阻擋，比手臂更嚴 */
+export const clampLegDir = (v, sx) => clampInward(v, sx, 1.0);
+
 const wrap180 = a => ((a + 180) % 360 + 360) % 360 - 180;
 
 /** 把所有欄位收進活動範圍內。預設動作、拖曳結果、貼上的姿勢代碼都會經過這裡 */
@@ -183,23 +216,25 @@ export function clampPose(pose) {
     if (lim) pose[k] = clamp(pose[k], lim[0], lim[1]);
   }
 
-  // 逐一檢查兩隻手臂的指向是否落在肩關節可及的區域內
-  for (const side of ['L', 'R']) {
+  // 逐一檢查四肢的指向是否落在人體可及的區域內。
+  // 角度區間是個方盒，真正的可及範圍是球面上的一塊區域，必須直接限制方向本身。
+  const fix = (side, pitchKey, outKey, clampDir) => {
     const sx = side === 'L' ? -1 : 1;
-    const p = pose['armPitch' + side] * D;
-    const o = -sx * pose['armOut' + side] * D;
+    const p = pose[pitchKey + side] * D;
+    const o = -sx * pose[outKey + side] * D;
     const v = [-Math.cos(p) * Math.sin(o), Math.sin(p), -Math.cos(p) * Math.cos(o)];
-    const c = clampArmSwing(v);
-    if (c === v) continue;
+    const c = clampDir(v, sx);
+    if (c === v) return;
 
     // 同一個方向有兩組等價的 (前後擺, 外展)：(p, o) 與 (180−p, o+180)。
     // 不能只比參數距離——比較近的那支可能一套上角度上限就被砍歪。
     // 所以兩支都先套限制，再比「實際得到的方向」離目標多遠。
+    const lp = LIMITS[pitchKey], lo = LIMITS[outKey];
     const pA = deg(Math.asin(clamp(c[1], -1, 1)));
     const oA = deg(Math.atan2(-c[0], -c[2]));
     const dirOf = (p2, o2) => {
-      const pc = clamp(p2, LIMITS.armPitch[0], LIMITS.armPitch[1]) * D;
-      const oc = -sx * clamp(-o2 * sx, LIMITS.armOut[0], LIMITS.armOut[1]) * D;
+      const pc = clamp(p2, lp[0], lp[1]) * D;
+      const oc = -sx * clamp(-o2 * sx, lo[0], lo[1]) * D;
       return [-Math.cos(pc) * Math.sin(oc), Math.sin(pc), -Math.cos(pc) * Math.cos(oc)];
     };
     const err = (p2, o2) => {
@@ -208,9 +243,12 @@ export function clampPose(pose) {
     };
     const cand = [[pA, oA], [wrap180(180 - pA), wrap180(oA + 180)]];
     const [pf, of_] = err(...cand[0]) <= err(...cand[1]) ? cand[0] : cand[1];
-
-    pose['armPitch' + side] = clamp(pf, LIMITS.armPitch[0], LIMITS.armPitch[1]);
-    pose['armOut' + side] = clamp(-of_ * sx, LIMITS.armOut[0], LIMITS.armOut[1]);
+    pose[pitchKey + side] = clamp(pf, lp[0], lp[1]);
+    pose[outKey + side] = clamp(-of_ * sx, lo[0], lo[1]);
+  };
+  for (const side of ['L', 'R']) {
+    fix(side, 'armPitch', 'armOut', clampArmDir);
+    fix(side, 'hipPitch', 'hipOut', clampLegDir);
   }
   return pose;
 }

@@ -288,13 +288,58 @@ console.log('\n【肩關節可及方向】')
   check('任意角度經 clampPose 後皆合法', bad2 === 0, `20000 組，違規 ${bad2}`)
 }
 
+console.log('\n【內收受身體阻擋】')
+{
+  // 肩、髖的關節點都在軀幹內部，純正面平面往內一點就會壓進身體；
+  // 但同時往前（或往後）擺開時，抱胸、盤腿這類動作應該仍然做得到
+  const adduct = (which, out, pitch) => {
+    const p = SK.KEYS.reduce((o, k) => (o[k] = 0, o), {})
+    p[which + 'OutL'] = out; p[which + 'PitchL'] = pitch
+    SK.clampPose(p)
+    return Math.round(p[which + 'OutL'])
+  }
+  check('手臂純正面內收 40° 被擋下', adduct('arm', -40, 0) === 0, `→ ${adduct('arm', -40, 0)}`)
+  check('手臂前擺 30° 時可內收 40°', adduct('arm', -40, 30) === -40, `→ ${adduct('arm', -40, 30)}`)
+  check('腿純正面內收 30° 被擋下', adduct('hip', -30, 0) === 0, `→ ${adduct('hip', -30, 0)}`)
+  check('腿前擺 60° 時可內收 30°', adduct('hip', -30, 60) === -30, `→ ${adduct('hip', -30, 60)}`)
+
+  // 兩條大腿不該被內收擠成幾乎重合
+  const thighOverlap = pose => {
+    const { joints: J } = SK.fk(pose)
+    let m = Infinity
+    for (let i = 0; i <= 20; i++) {
+      const a = [0,1,2].map(k => J.hipL[k] + (J.kneeL[k] - J.hipL[k]) * i / 20)
+      for (let j = 0; j <= 20; j++) {
+        const b = [0,1,2].map(k => J.hipR[k] + (J.kneeR[k] - J.hipR[k]) * j / 20)
+        m = Math.min(m, Math.hypot(a[0]-b[0], a[1]-b[1], a[2]-b[2]))
+      }
+    }
+    return (2 * P.legR - m) / (2 * P.legR)
+  }
+  check('雙腿併攏時重疊維持在基準值', thighOverlap(SK.clonePose(null)) < 0.25,
+        `${(thighOverlap(SK.clonePose(null)) * 100).toFixed(0)}%`)
+  check('刻意內收後雙腿不會幾乎重合',
+        thighOverlap(SK.clonePose({ hipOutL: -30, hipOutR: -30 })) < 0.3,
+        `${(thighOverlap(SK.clonePose({ hipOutL: -30, hipOutR: -30 })) * 100).toFixed(0)}%`)
+
+  // 預設一個都不能被這些新規則改到
+  let touched = 0
+  for (const pre of Object.values(PRESETS)) {
+    const a = SK.KEYS.reduce((o, k) => (o[k] = pre[k] ?? 0, o), {})
+    const b = SK.clonePose(pre)
+    if (SK.KEYS.some(k => Math.abs(a[k] - b[k]) > 0.5)) touched++
+  }
+  check('八款預設未被新規則改動', touched === 0, `${touched} 款被改動`)
+}
+
 console.log('\n【不能把關節拖進身體裡】')
 {
   const depth = (pose, key) => SK.bodyPenetration(SK.fk(pose).joints, key)
-  // 使用者回報的姿勢：右手肘完全埋進軀幹
-  const bad = SK.clonePose({ armPitchR: 1, armOutR: -30, armTwistR: 90, elbowR: 60 })
-  check('偵測得到手肘被身體吞掉', depth(bad, 'elbowR') > P.armR,
-        `陷入 ${depth(bad,'elbowR').toFixed(2)}，手臂半徑 ${P.armR}`)
+  // 內收受限之後仍有辦法把關節埋進身體：手臂垂著、外旋 90° 再把前臂往內折
+  const bad = SK.clonePose({ armTwistR: -90, elbowR: 90 })
+  const rWrist = P.armR * P.foreScale
+  check('偵測得到手掌被身體吞掉', depth(bad, 'handR') > rWrist,
+        `陷入 ${depth(bad,'handR').toFixed(2)}，前臂半徑 ${rWrist.toFixed(2)}`)
   // 正常姿勢不能誤判
   let worst = 0, who = ''
   for (const [n, pre] of Object.entries(PRESETS)) {
