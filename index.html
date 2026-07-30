@@ -27,16 +27,21 @@
 
   /* 三個面板 */
   .panels{display:grid;gap:10px;grid-template-columns:1fr}
-  @media(min-width:900px){.panels{grid-template-columns:1fr 1fr 1.35fr}}
+  @media(min-width:900px){
+    .panels{grid-template-columns:1fr 1fr 1.35fr}
+    canvas.edit, #view3d{height:clamp(320px, 52vh, 560px)}
+  }
   .panel{min-width:0}
   .panel h2{font-size:13px;font-weight:700;color:var(--sub);margin:0 0 5px}
-  /* 視圖高度隨視窗調整：參數都改成滑桿之後，垂直空間應該留給圖 */
-  canvas.edit{width:100%;height:clamp(320px, 52vh, 560px);display:block;background:#fffefc;
+  /* 視圖高度隨視窗調整：參數都改成滑桿之後，垂直空間應該留給圖。
+     窄螢幕改成單欄堆疊，三張圖若各佔 52vh 會捲不完，所以壓低一些 */
+  canvas.edit{width:100%;height:clamp(300px, 40vh, 420px);display:block;background:#fffefc;
     border:1px solid var(--line);border-radius:10px;touch-action:none;cursor:grab}
   canvas.edit.dragging{cursor:grabbing}
-  #view3d{width:100%;height:clamp(320px, 52vh, 560px);border:1px solid var(--line);border-radius:10px;
+  #view3d{width:100%;height:clamp(300px, 40vh, 420px);border:1px solid var(--line);border-radius:10px;
     overflow:hidden;background:linear-gradient(#fffefc,#f2ece2)}
-  #view3d canvas{display:block;border-radius:10px}
+  /* 再保險一層：即使 renderer 沒寫 CSS 尺寸，畫布也會貼合容器 */
+  #view3d canvas{display:block;width:100%;height:100%;border-radius:10px}
   .loadError{display:none;background:#fbeae7;border:1px solid #e8c4bc;color:#a4402f;
     border-radius:12px;padding:14px 16px;margin-bottom:12px;font-size:13.5px;line-height:1.9}
   .loadError code{background:#fff;padding:1px 5px;border-radius:4px;font-size:12.5px}
@@ -243,6 +248,6 @@
   }, 4000);
 })();
 </script>
-<script type="module" src="./src/main.js?v=1.9.0"></script>
+<script type="module" src="./src/main.js?v=1.10.0"></script>
 </body>
 </html>

@@ -156,7 +156,12 @@ export class Viewer3D {
   resize() {
     const w = this.el.clientWidth, h = this.el.clientHeight;
     if (!w || !h) return;
-    this.renderer.setSize(w, h, false);
+    // 第三個參數務必留在預設值 true。
+    // 傳 false 時 three 只設定 canvas 的 width/height 屬性，不寫 CSS 尺寸；
+    // canvas 沒有 CSS 寬高時，版面尺寸就等於屬性值（以 CSS 像素計）＝ 容器寬 × pixelRatio。
+    // 在 pixelRatio 2 的手機上畫布會變成兩倍大，被 overflow:hidden 裁掉四分之三，
+    // 人偶（畫面中心）就跑到右下角外側去了。pixelRatio 1 的桌機看不出來。
+    this.renderer.setSize(w, h);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
   }

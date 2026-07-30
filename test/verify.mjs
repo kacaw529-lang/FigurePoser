@@ -293,6 +293,21 @@ console.log('\n【分享連結】')
   check('滑桿下限已改為 4 mm', /id="headDia"[^>]*min="4"/.test(html))
 }
 
+console.log('\n【高解析螢幕的畫布尺寸】')
+{
+  // 這一組是為了防止一個只在 pixelRatio > 1 的裝置上才會發作的迴歸：
+  // renderer.setSize(w, h, false) 不會寫 CSS 尺寸，畫布會被放大成容器的 pixelRatio 倍，
+  // 再被 overflow:hidden 裁掉，人偶就跑出可見範圍。桌機（pixelRatio 1）完全看不出來。
+  const viewer = fs.readFileSync('src/viewer3d.js', 'utf8')
+  const calls = viewer.match(/setSize\([^)]*\)/g) || []
+  check('renderer.setSize 沒有關閉 CSS 尺寸更新', calls.length > 0 && calls.every(c => !/false/.test(c)),
+        calls.join(' / '))
+  const html2 = fs.readFileSync('index.html', 'utf8')
+  check('畫布另有 CSS 尺寸兜底', /#view3d canvas\{[^}]*width:100%[^}]*height:100%/.test(html2))
+  check('窄螢幕的視圖高度較低', /clamp\(300px, 40vh, 420px\)/.test(html2))
+  check('寬螢幕才放大到 52vh', /min-width:900px\)\{[\s\S]{0,200}52vh/.test(html2))
+}
+
 console.log('\n【UI 串接】')
 {
   const dom = new JSDOM(fs.readFileSync('index.html','utf8'), { pretendToBeVisual:true })
