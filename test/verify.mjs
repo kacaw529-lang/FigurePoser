@@ -339,48 +339,98 @@ console.log('\n【肩關節可及方向】')
   check('任意角度經 clampPose 後皆合法', bad2 === 0, `20000 組，違規 ${bad2}`)
 }
 
-console.log('\n【內收受身體阻擋】')
+console.log('\n【碰撞修正：關節不得陷進身體】')
 {
-  // 肩、髖的關節點都在軀幹內部，純正面平面往內一點就會壓進身體；
-  // 但同時往前（或往後）擺開時，抱胸、盤腿這類動作應該仍然做得到
-  const adduct = (which, out, pitch) => {
-    const p = SK.KEYS.reduce((o, k) => (o[k] = 0, o), {})
-    p[which + 'OutL'] = out; p[which + 'PitchL'] = pitch
-    SK.clampPose(p)
-    return Math.round(p[which + 'OutL'])
+  const R = {
+    handL: P.armR * P.foreScale, handR: P.armR * P.foreScale,
+    elbowL: P.armR, elbowR: P.armR,
+    kneeL: P.legR, kneeR: P.legR,
+    footL: P.legR * P.foreScale, footR: P.legR * P.foreScale
   }
-  check('手臂純正面內收 40° 被擋下', adduct('arm', -40, 0) === 0, `→ ${adduct('arm', -40, 0)}`)
-  check('手臂前擺 30° 時可內收 40°', adduct('arm', -40, 30) === -40, `→ ${adduct('arm', -40, 30)}`)
-  check('腿純正面內收 30° 被擋下', adduct('hip', -30, 0) === 0, `→ ${adduct('hip', -30, 0)}`)
-  check('腿前擺 60° 時可內收 30°', adduct('hip', -30, 60) === -30, `→ ${adduct('hip', -30, 60)}`)
-
-  // 兩條大腿不該被內收擠成幾乎重合
+  const deepest = pose => {
+    const { joints: J } = SK.fk(pose)
+    let m = 0, at = ''
+    for (const [k, r] of Object.entries(R)) {
+      const d = SK.bodyPenetration(J, k) / r
+      if (d > m) { m = d; at = k }
+    }
+    return { m, at }
+  }
   const thighOverlap = pose => {
     const { joints: J } = SK.fk(pose)
-    let m = Infinity
-    for (let i = 0; i <= 20; i++) {
-      const a = [0,1,2].map(k => J.hipL[k] + (J.kneeL[k] - J.hipL[k]) * i / 20)
-      for (let j = 0; j <= 20; j++) {
-        const b = [0,1,2].map(k => J.hipR[k] + (J.kneeR[k] - J.hipR[k]) * j / 20)
-        m = Math.min(m, Math.hypot(a[0]-b[0], a[1]-b[1], a[2]-b[2]))
+    let min = Infinity
+    for (let i = 0; i <= 24; i++) {
+      const a = [0,1,2].map(k => J.hipL[k] + (J.kneeL[k] - J.hipL[k]) * i / 24)
+      for (let j = 0; j <= 24; j++) {
+        const b = [0,1,2].map(k => J.hipR[k] + (J.kneeR[k] - J.hipR[k]) * j / 24)
+        min = Math.min(min, Math.hypot(a[0]-b[0], a[1]-b[1], a[2]-b[2]))
       }
     }
-    return (2 * P.legR - m) / (2 * P.legR)
+    return (2 * P.legR - min) / (2 * P.legR)
   }
-  check('雙腿併攏時重疊維持在基準值', thighOverlap(SK.clonePose(null)) < 0.25,
-        `${(thighOverlap(SK.clonePose(null)) * 100).toFixed(0)}%`)
-  check('刻意內收後雙腿不會幾乎重合',
-        thighOverlap(SK.clonePose({ hipOutL: -30, hipOutR: -30 })) < 0.3,
-        `${(thighOverlap(SK.clonePose({ hipOutL: -30, hipOutR: -30 })) * 100).toFixed(0)}%`)
 
-  // 預設一個都不能被這些新規則改到
+  // 未修正時確實抓得到（否則等於沒測）
+  const rawOf = o => SK.KEYS.reduce((a, k) => (a[k] = o[k] ?? 0, a), {})
+  check('未修正時手臂內收會把手肘埋進軀幹',
+        deepest(rawOf({ armOutL: -40 })).m > 1.3,
+        `${(deepest(rawOf({armOutL:-40})).m*100).toFixed(0)}%`)
+  check('未修正時雙腿內收會整個疊在一起',
+        thighOverlap(rawOf({ hipOutL: -30, hipOutR: -30 })) > 0.9,
+        `${(thighOverlap(rawOf({hipOutL:-30,hipOutR:-30}))*100).toFixed(0)}%`)
+
+  // 修正後
+  check('手臂內收後手肘回到門檻內',
+        deepest(SK.clonePose({ armOutL: -40 })).m <= SK.BALL_PENETRATION_MAX + 0.01,
+        `${(deepest(SK.clonePose({armOutL:-40})).m*100).toFixed(0)}%（門檻 ${(SK.BALL_PENETRATION_MAX*100).toFixed(0)}%）`)
+  check('雙腿不再疊在一起',
+        thighOverlap(SK.clonePose({ hipOutL: -30, hipOutR: -30 })) < 0.5,
+        `${(thighOverlap(SK.clonePose({hipOutL:-30,hipOutR:-30}))*100).toFixed(0)}%`)
+
+  // 正常姿勢不能被誤傷
+  check('雙腿併攏維持基準重疊', thighOverlap(SK.clonePose(null)) < 0.25,
+        `${(thighOverlap(SK.clonePose(null))*100).toFixed(0)}%`)
+  check('盤腿坐不受影響',
+        thighOverlap(SK.clonePose({ hipPitchL:80, hipOutL:45, kneeL:130, hipPitchR:80, hipOutR:45, kneeR:130 })) < 0.25)
+  for (const [n, pre] of Object.entries(PRESETS))
+    check(`${n.padEnd(10)} 陷入深度在門檻內`, deepest(SK.clonePose(pre)).m <= SK.BALL_PENETRATION_MAX + 0.01,
+          `${(deepest(SK.clonePose(pre)).m*100).toFixed(0)}%`)
+
+  // 全域保證：任何角度組合經過 clampPose 之後都不得超過門檻
+  {
+    let worst = 0, at = '', ov = 0
+    for (let i = 0; i < 4000; i++) {
+      const raw = SK.KEYS.reduce((o, k) => {
+        const L = SK.LIMITS[/[LR]$/.test(k) ? k.slice(0, -1) : k]
+        o[k] = L ? L[0] + Math.random() * (L[1] - L[0]) : 0
+        return o
+      }, {})
+      const p = SK.clonePose(raw)
+      const d = deepest(p)
+      if (d.m > worst) { worst = d.m; at = d.at }
+      ov = Math.max(ov, thighOverlap(p))
+    }
+    check('隨機 4000 組任意角度都在門檻內', worst <= SK.BALL_PENETRATION_MAX + 0.01,
+          `最深 ${(worst*100).toFixed(0)}%（${at}）`)
+    check('隨機 4000 組雙腿都不會疊死', ov < 0.55, `最大重疊 ${(ov*100).toFixed(0)}%`)
+  }
+
+  // 預設一個都不能被改動
   let touched = 0
   for (const pre of Object.values(PRESETS)) {
     const a = SK.KEYS.reduce((o, k) => (o[k] = pre[k] ?? 0, o), {})
     const b = SK.clonePose(pre)
     if (SK.KEYS.some(k => Math.abs(a[k] - b[k]) > 0.5)) touched++
   }
-  check('八款預設未被新規則改動', touched === 0, `${touched} 款被改動`)
+  check('八款預設未被碰撞修正改動', touched === 0, `${touched} 款被改動`)
+
+  // 效能：正常姿勢要走快速路徑，拖曳時才不會頓
+  {
+    const p = SK.clonePose(PRESETS['03 直立'])
+    const t0 = Date.now()
+    for (let i = 0; i < 3000; i++) SK.clampPose(p)
+    const dt = (Date.now() - t0) / 3000
+    check('正常姿勢的修正成本可忽略', dt < 0.05, `${dt.toFixed(3)} ms`)
+  }
 }
 
 console.log('\n【不能把關節拖進身體裡】')

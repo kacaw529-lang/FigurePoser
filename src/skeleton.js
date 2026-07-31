@@ -181,91 +181,284 @@ export function clampArmSwing(v) {
   return [s * Math.sin(azRad), s * Math.cos(azRad), -Math.cos(t)];
 }
 
+const wrap180 = a => ((a + 180) % 360 + 360) % 360 - 180;
+const cross3 = (a, b) => [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+
+/** 由「前後擺 / 外展」算出肢體方向（所屬座標系下） */
+const dirFromSwing = (pitch, out, sx) => {
+  const p = pitch * D, o = -sx * out * D;
+  return [-Math.cos(p) * Math.sin(o), Math.sin(p), -Math.cos(p) * Math.cos(o)];
+};
+
 /**
- * 內收（肢體指向身體中線）受身體本身阻擋。
- *
- * 肩與髖的關節點都埋在軀幹內部，所以在「正面平面上」稍微往內就會直接壓進身體：
- * 實測肩關節內收 10° 上臂中段就陷入軀幹達自身半徑的 117%；
- * 髖關節內收 15° 兩條大腿幾乎完全重合。
- *
- * 但人體確實能把手抱在胸前、坐著盤腿——關鍵是那些動作同時把肢體往前（或往後）擺開，
- * 離開了正面平面。因此這裡的規則是：**往內的分量上限，隨「往前後擺開的程度」放寬**。
- *
- * @param {number[]} v 軀幹座標下的肢體方向
- * @param {number} sx 左為 −1、右為 +1
- * @param {number} k 放寬係數（手臂較寬鬆，腿較嚴）
+ * 在球面上從 dir0 往外一圈一圈搜尋，回傳最接近且通過 accept 的方向。
+ * 由近而遠地找，修正量才會最小，使用者拖曳的意圖得以保留。
  */
-export function clampInward(v, sx, k) {
-  let out = v;
-  // 壓低往內分量後，前後分量會等比放大、上限跟著變寬，故迭代兩次收斂
-  for (let i = 0; i < 2; i++) {
-    const din = -sx * out[0];
-    const allow = Math.abs(out[1]) * k;
-    if (allow >= 1 || din <= allow) break;
-    const rest = Math.hypot(out[1], out[2]);
-    const scale = rest > 1e-9 ? Math.sqrt(Math.max(0, 1 - allow * allow)) / rest : 0;
-    out = [-sx * allow, out[1] * scale, out[2] * scale];
+function nearestAcceptableDir(dir0, accept) {
+  if (accept(dir0)) return dir0;
+  const helper = Math.abs(dir0[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+  const e1 = norm(cross3(helper, dir0));
+  const e2 = cross3(dir0, e1);
+  for (let ring = 4; ring <= 160; ring += 4) {
+    const t = ring * D, st = Math.sin(t), ct = Math.cos(t);
+    for (let i = 0; i < 24; i++) {
+      const ph = (i / 24) * 2 * Math.PI, cp = Math.cos(ph), sp = Math.sin(ph);
+      const d = [
+        dir0[0] * ct + (e1[0] * cp + e2[0] * sp) * st,
+        dir0[1] * ct + (e1[1] * cp + e2[1] * sp) * st,
+        dir0[2] * ct + (e1[2] * cp + e2[2] * sp) * st
+      ];
+      if (accept(d)) return d;
+    }
   }
-  return out;
+  return dir0;                       // 完全找不到，維持原狀
 }
 
-/** 手臂：往後受肩關節伸展上限、往內受軀幹阻擋 */
-export const clampArmDir = (v, sx) => clampInward(clampArmSwing(v), sx, 1.2);
-/** 腿：往內受另一條腿阻擋，比手臂更嚴 */
-export const clampLegDir = (v, sx) => clampInward(v, sx, 1.0);
+/**
+ * 把方向換算成「角度區間內真的表達得出來」的實際方向。
+ * 搜尋時必須用這個結果做判斷，否則找到的方向會在寫回時被角度上限砍歪，
+ * 修正等於白做。
+ */
+function snapDir(c, sx, pitchKey, outKey) {
+  const lp = LIMITS[pitchKey], lo = LIMITS[outKey];
+  const pA = deg(Math.asin(clamp(c[1], -1, 1)));
+  const oA = deg(Math.atan2(-c[0], -c[2]));
+  const make = (p2, o2) => {
+    const pitch = clamp(p2, lp[0], lp[1]);
+    const out = clamp(-o2 * sx, lo[0], lo[1]);
+    return { pitch, out, dir: dirFromSwing(pitch, out, sx) };
+  };
+  const a = make(pA, oA), b = make(wrap180(180 - pA), wrap180(oA + 180));
+  const err = r => Math.hypot(r.dir[0]-c[0], r.dir[1]-c[1], r.dir[2]-c[2]);
+  return err(a) <= err(b) ? a : b;
+}
 
-const wrap180 = a => ((a + 180) % 360 + 360) % 360 - 180;
+/**
+ * 把修正後的方向寫回 (前後擺, 外展)。
+ * 同一個方向有兩組等價解 (p, o) 與 (180−p, o+180)，不能只比參數距離——
+ * 比較近的那支可能一套上角度上限就被砍歪。兩支都先套限制，再比實際方向誰接近。
+ */
+function writeSwing(pose, side, pitchKey, outKey, c, sx) {
+  const lp = LIMITS[pitchKey], lo = LIMITS[outKey];
+  const pA = deg(Math.asin(clamp(c[1], -1, 1)));
+  const oA = deg(Math.atan2(-c[0], -c[2]));
+  const dirOf = (p2, o2) => {
+    const pc = clamp(p2, lp[0], lp[1]);
+    const oc = clamp(-o2 * sx, lo[0], lo[1]);
+    return dirFromSwing(pc, oc, sx);
+  };
+  const err = (p2, o2) => {
+    const d = dirOf(p2, o2);
+    return Math.hypot(d[0] - c[0], d[1] - c[1], d[2] - c[2]);
+  };
+  const cand = [[pA, oA], [wrap180(180 - pA), wrap180(oA + 180)]];
+  const [pf, of_] = err(...cand[0]) <= err(...cand[1]) ? cand[0] : cand[1];
+  pose[pitchKey + side] = clamp(pf, lp[0], lp[1]);
+  pose[outKey + side] = clamp(-of_ * sx, lo[0], lo[1]);
+}
 
-/** 把所有欄位收進活動範圍內。預設動作、拖曳結果、貼上的姿勢代碼都會經過這裡 */
+/**
+ * 關節球容許陷入身體的深度上限（佔自身半徑）。
+ * 肩、髖的關節點都在軀幹內部，所以手肘球本來就會埋一部分——
+ * 八款預設最深 45%，明顯穿模的案例是 115~173%，門檻取 80% 可乾淨分開。
+ */
+export const BALL_PENETRATION_MAX = 0.80;
+
+/**
+ * 兩條線段之間的最短距離（解析解）。
+ * 只檢查膝蓋球對另一條大腿不夠——兩腿同時內收時膝蓋會互相錯開，
+ * 但兩條大腿在中間交叉成 X，非得用線段對線段才抓得到。
+ */
+const segSegDist = (p1, q1, p2, q2) => {
+  const d1 = [q1[0]-p1[0], q1[1]-p1[1], q1[2]-p1[2]];
+  const d2 = [q2[0]-p2[0], q2[1]-p2[1], q2[2]-p2[2]];
+  const r  = [p1[0]-p2[0], p1[1]-p2[1], p1[2]-p2[2]];
+  const dot = (a, b) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
+  const a = dot(d1, d1), e = dot(d2, d2), f = dot(d2, r);
+  let s2, t2;
+  if (a < 1e-12 && e < 1e-12) return Math.hypot(r[0], r[1], r[2]);
+  if (a < 1e-12) { s2 = 0; t2 = clamp(f / e, 0, 1); }
+  else {
+    const c = dot(d1, r);
+    if (e < 1e-12) { t2 = 0; s2 = clamp(-c / a, 0, 1); }
+    else {
+      const b = dot(d1, d2), den = a * e - b * b;
+      s2 = den > 1e-12 ? clamp((b * f - c * e) / den, 0, 1) : 0;
+      t2 = (b * s2 + f) / e;
+      if (t2 < 0) { t2 = 0; s2 = clamp(-c / a, 0, 1); }
+      else if (t2 > 1) { t2 = 1; s2 = clamp((b - c) / a, 0, 1); }
+    }
+  }
+  const c1 = [p1[0]+d1[0]*s2, p1[1]+d1[1]*s2, p1[2]+d1[2]*s2];
+  const c2 = [p2[0]+d2[0]*t2, p2[1]+d2[1]*t2, p2[2]+d2[2]*t2];
+  return Math.hypot(c1[0]-c2[0], c1[1]-c2[1], c1[2]-c2[2]);
+};
+
+/** 點到線段的距離（用於肢體之間的碰撞） */
+const segDist = (p, a, b) => {
+  const abx = b[0]-a[0], aby = b[1]-a[1], abz = b[2]-a[2];
+  const apx = p[0]-a[0], apy = p[1]-a[1], apz = p[2]-a[2];
+  const d2 = abx*abx + aby*aby + abz*abz;
+  let t = d2 > 1e-12 ? (apx*abx + apy*aby + apz*abz) / d2 : 0;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  return Math.hypot(apx - abx*t, apy - aby*t, apz - abz*t);
+};
+
+/**
+ * 關節陷入軀幹或頭部的深度（正值＝在裡面多深）。
+ * 拖曳時用來否決「把手拖進身體裡」這種結果。
+ */
+export function bodyPenetration(joints, key) {
+  const t = torsoSDF(ap(tp(joints.Mwaist), joints[key]));
+  const h = Math.hypot(...sub(joints[key], joints.head)) - P.headR;
+  return -Math.min(t, h);
+}
+
+/**
+ * 把姿勢收進「人做得到」的範圍。四層，每層職責單一：
+ *
+ *   1. 角度區間      各關節的 ROM（LIMITS）
+ *   2. 解剖學方向區域  只有肩關節後方那一塊——那裡沒有東西擋著，純粹是關節囊的限制
+ *   3. 解剖學折彎基準  手肘一律往身體前方折（見 elbowTwistBase，屬結構而非限制）
+ *   4. 碰撞修正      由近端往遠端跑一遍，直接檢查實際位置有沒有陷進身體
+ *
+ * 第 4 層取代了早期那些手工調出來的「內收上限」曲線。那些規則其實都在描述
+ * 「身體擋住了」，用碰撞表達更直接；更重要的是它看得到**耦合**——
+ * 腰部前彎會讓軀幹掃過大腿、頭部傾斜會讓頭撞到手肘，
+ * 而 waistPitch / headPitch 都不是四肢自己的角度，任何針對四肢角度的限制都看不見。
+ */
 export function clampPose(pose) {
+  // 第 1 層：角度區間
   for (const k of KEYS) {
     const lim = LIMITS[/[LR]$/.test(k) ? k.slice(0, -1) : k];
     if (lim) pose[k] = clamp(pose[k], lim[0], lim[1]);
   }
 
-  // 逐一檢查四肢的指向是否落在人體可及的區域內。
-  // 角度區間是個方盒，真正的可及範圍是球面上的一塊區域，必須直接限制方向本身。
-  const fix = (side, pitchKey, outKey, clampDir) => {
-    const sx = side === 'L' ? -1 : 1;
-    const p = pose[pitchKey + side] * D;
-    const o = -sx * pose[outKey + side] * D;
-    const v = [-Math.cos(p) * Math.sin(o), Math.sin(p), -Math.cos(p) * Math.cos(o)];
-    const c = clampDir(v, sx);
-    if (c === v) return;
+  // 身體在「軀幹座標」下的樣子：軀幹用 torsoSDF，頭是一顆球
+  const Mh = rotM(-pose.headPitch, pose.headRoll, 0);
+  const headC = [
+    Mh[0][2] * P.headDist,
+    Mh[1][2] * P.headDist,
+    P.headPivotZ + Mh[2][2] * P.headDist
+  ];
+  const bodyPen = (pWaist, r) => Math.max(
+    -torsoSDF(pWaist),
+    P.headR - Math.hypot(pWaist[0] - headC[0], pWaist[1] - headC[1], pWaist[2] - headC[2])
+  ) / r;
 
-    // 同一個方向有兩組等價的 (前後擺, 外展)：(p, o) 與 (180−p, o+180)。
-    // 不能只比參數距離——比較近的那支可能一套上角度上限就被砍歪。
-    // 所以兩支都先套限制，再比「實際得到的方向」離目標多遠。
-    const lp = LIMITS[pitchKey], lo = LIMITS[outKey];
-    const pA = deg(Math.asin(clamp(c[1], -1, 1)));
-    const oA = deg(Math.atan2(-c[0], -c[2]));
-    const dirOf = (p2, o2) => {
-      const pc = clamp(p2, lp[0], lp[1]) * D;
-      const oc = -sx * clamp(-o2 * sx, lo[0], lo[1]) * D;
-      return [-Math.cos(pc) * Math.sin(oc), Math.sin(pc), -Math.cos(pc) * Math.cos(oc)];
-    };
-    const err = (p2, o2) => {
-      const d = dirOf(p2, o2);
-      return Math.hypot(d[0] - c[0], d[1] - c[1], d[2] - c[2]);
-    };
-    const cand = [[pA, oA], [wrap180(180 - pA), wrap180(oA + 180)]];
-    const [pf, of_] = err(...cand[0]) <= err(...cand[1]) ? cand[0] : cand[1];
-    pose[pitchKey + side] = clamp(pf, lp[0], lp[1]);
-    pose[outKey + side] = clamp(-of_ * sx, lo[0], lo[1]);
-  };
+  // 第 2＋4 層：手臂。肩關節後方區域（解剖）與手肘球不得陷入身體（幾何）一起判斷，
+  // 在兩者的交集上找最接近原方向的解。
   for (const side of ['L', 'R']) {
-    fix(side, 'armPitch', 'armOut', clampArmDir);
-    fix(side, 'hipPitch', 'hipOut', clampLegDir);
-    fixForearm(pose, side);
+    const sx = side === 'L' ? -1 : 1;
+    const shoulder = [sx * P.shoulderX, 0, P.shoulderZ];
+    const v = dirFromSwing(pose['armPitch' + side], pose['armOut' + side], sx);
+    const accept = d => {
+      const s2 = snapDir(d, sx, 'armPitch', 'armOut');                 // 只認角度區間表達得出來的方向
+      if (clampArmSwing(s2.dir) !== s2.dir) return false;              // 落在肩關節可及區域外
+      const e = [shoulder[0] + s2.dir[0] * P.upArm, shoulder[1] + s2.dir[1] * P.upArm, shoulder[2] + s2.dir[2] * P.upArm];
+      return bodyPen(e, P.armR) <= BALL_PENETRATION_MAX;
+    };
+    if (!accept(v)) {
+      const c = nearestAcceptableDir(clampArmSwing(v), accept);
+      const s2 = snapDir(c, sx, 'armPitch', 'armOut');
+      pose['armPitch' + side] = s2.pitch;
+      pose['armOut' + side] = s2.out;
+    }
+  }
+
+  // 第 4 層：腿。膝蓋球除了身體，還要避開另一條大腿——否則兩腿會疊在一起。
+  // 兩腿同時內收時，若各自只對照「對方原本的位置」，兩邊會往同一方向一起移動、
+  // 結果仍然重疊；因此改成反覆數輪、每輪都用對方的最新位置，逐步把彼此推開。
+  {
+    const W = rotM(-pose.waistPitch, 0, pose.waistTwist);   // 軀幹相對骨盆
+    const Wt = tp(W);
+    const hipRoot = sx => ap(W, [sx * P.hipX, 0, P.hipZ]);
+    const kneeRoot = (sx, d) => {
+      const h = hipRoot(sx);
+      return [h[0] + d[0] * P.upLeg, h[1] + d[1] * P.upLeg, h[2] + d[2] * P.upLeg];
+    };
+    const dirOf = side => dirFromSwing(pose['hipPitch' + side], pose['hipOut' + side],
+                                       side === 'L' ? -1 : 1);
+    for (let pass = 0; pass < 3; pass++) {
+      let moved = false;
+      for (const side of ['L', 'R']) {
+        const sx = side === 'L' ? -1 : 1;
+        const oSide = side === 'L' ? 'R' : 'L';
+        const oSx = -sx;
+        const oHip = hipRoot(oSx);
+        const oKnee = kneeRoot(oSx, dirOf(oSide));
+        const accept = d => {
+          const s2 = snapDir(d, sx, 'hipPitch', 'hipOut');
+          const k = kneeRoot(sx, s2.dir);
+          if (bodyPen(ap(Wt, k), P.legR) > BALL_PENETRATION_MAX) return false;
+          const hip = hipRoot(sx);
+          const gap = segSegDist(hip, k, oHip, oKnee);   // 整條大腿對整條大腿
+          return (2 * P.legR - gap) / P.legR <= BALL_PENETRATION_MAX;
+        };
+        const cur = dirOf(side);
+        if (accept(cur)) continue;
+        const c = nearestAcceptableDir(cur, accept);
+        const s2 = snapDir(c, sx, 'hipPitch', 'hipOut');
+        pose['hipPitch' + side] = s2.pitch;
+        pose['hipOut' + side] = s2.out;
+        moved = true;
+      }
+      if (!moved) break;
+    }
+  }
+
+  // 第 4 層（遠端）：前臂與小腿不得折進身體
+  for (const side of ['L', 'R']) fixForearm(pose, side, headC);
+  {
+    const W = rotM(-pose.waistPitch, 0, pose.waistTwist);
+    const Wt = tp(W);
+    for (const side of ['L', 'R']) fixShin(pose, side, W, Wt, headC, bodyPen);
   }
   return pose;
 }
 
 /**
- * 前臂是否可接受。兩個條件都要成立：
- *   1. 埋進軀幹的長度比例不超過上限（八款預設最高 34%，明顯穿透的案例是 85~100%）
- *   2. 手掌那一點不能整顆陷進軀幹裡（只看軀幹，手放在頭上是刻意的）
- * 只看比例會漏掉「前臂後半段連同手掌沒入身體」的情形，兩者要一起判斷。
+ * 小腿折進身體的修正。
+ * 膝蓋是單自由度、沒有扭轉可調，唯一的手段就是改變彎曲角度；
+ * 從目前值往兩側搜尋最接近的可用值，修正量才最小。
+ */
+function fixShin(pose, side, W, Wt, headC, bodyPen) {
+  const sx = side === 'L' ? -1 : 1;
+  const hip = ap(W, [sx * P.hipX, 0, P.hipZ]);
+  const Mth = rotM(pose['hipPitch' + side], -sx * pose['hipOut' + side], 0);
+  const knee = [
+    hip[0] + Mth[0][2] * -P.upLeg,
+    hip[1] + Mth[1][2] * -P.upLeg,
+    hip[2] + Mth[2][2] * -P.upLeg
+  ];
+  const rShin = P.legR * P.foreScale;
+  const ok = kneeDeg => {
+    const M = mul(Mth, Rx(-kneeDeg * D));
+    const dir = [-M[0][2], -M[1][2], -M[2][2]];
+    for (let i = 4; i <= 16; i++) {          // 跳過靠近膝蓋的前段，那裡本來就與大腿相接
+      const t = (i / 16) * P.loLeg;
+      const p = [knee[0] + dir[0]*t, knee[1] + dir[1]*t, knee[2] + dir[2]*t];
+      if (bodyPen(ap(Wt, p), rShin) > BALL_PENETRATION_MAX) return false;
+    }
+    return true;
+  };
+  const cur = pose['knee' + side];
+  if (ok(cur)) return;
+  const [lo, hi] = LIMITS.knee;
+  for (let d = 5; d <= 150; d += 5) {
+    for (const k of [cur - d, cur + d]) {
+      if (k < lo || k > hi) continue;
+      if (ok(k)) { pose['knee' + side] = k; return; }
+    }
+  }
+}
+
+/**
+ * 前臂是否可接受。三個條件都要成立：
+ *   1. 埋進軀幹的長度比例不超過上限（八款預設最高 34%，明顯穿透是 85~100%）
+ *   2. 手掌陷進軀幹的深度與其他關節球用同一個門檻
+ *   3. 手掌可以輕觸頭部（「舉手抱頭」靠這點融接），但不能整顆沒入
+ * 只看比例會漏掉「前臂後半段連同手掌沒入身體」，三者要一起判斷。
  */
 const FOREARM_BURIED_MAX = 0.55;
 function forearmOK(elbow, dir, headC) {
@@ -277,20 +470,18 @@ function forearmOK(elbow, dir, headC) {
   }
   if (inside / (N + 1) > FOREARM_BURIED_MAX) return false;
   const hand = [elbow[0] + dir[0] * P.loArm, elbow[1] + dir[1] * P.loArm, elbow[2] + dir[2] * P.loArm];
-  if (-torsoSDF(hand) > P.armR * P.foreScale) return false;
-  // 手掌可以輕觸頭部（「舉手抱頭」就是靠這點融接），但不能整顆沒入
+  if (-torsoSDF(hand) > BALL_PENETRATION_MAX * P.armR * P.foreScale) return false;
   const dh = Math.hypot(hand[0] - headC[0], hand[1] - headC[1], hand[2] - headC[2]);
   return P.headR - dh <= 0.5 * P.armR * P.foreScale;
 }
 
 /**
- * 前臂折進軀幹裡的修正。
- *
- * 扭轉 0 時手肘往身體前方折，前臂會離開軀幹；但扭轉接近 ±90 時折彎方向轉到側面，
- * 對內側那一邊來說就是直接折進身體。這裡沿著扭轉角往兩側搜尋最接近的可用值，
- * 只動扭轉、不動手肘彎曲，使用者想要的彎曲程度得以保留。
+ * 前臂折進身體的修正。
+ * 扭轉接近 ±90 時折彎方向轉到側面，對內側那一邊就是直接折進身體。
+ * 沿著扭轉角往兩側搜尋最接近的可用值——只動扭轉，保留使用者要的手肘彎曲程度；
+ * 真的無解才逐步減少彎曲。
  */
-function fixForearm(pose, side) {
+function fixForearm(pose, side, headC) {
   const sx = side === 'L' ? -1 : 1;
   const A = rotM(pose['armPitch' + side], -sx * pose['armOut' + side], 0);
   const base = elbowTwistBase(A);
@@ -304,26 +495,17 @@ function fixForearm(pose, side) {
     const M = mul(mul(A, Rz(base + (-sx * twistDeg) * D)), Rx(elbowDeg * D));
     return [-M[0][2], -M[1][2], -M[2][2]];
   };
-  // 頭部中心（軀幹座標）；頭會隨頸部傾斜移動，必須實際算出來
-  const Mhead = rotM(-pose.headPitch, pose.headRoll, 0);
-  const headC = [
-    Mhead[0][2] * P.headDist,
-    Mhead[1][2] * P.headDist,
-    P.headPivotZ + Mhead[2][2] * P.headDist
-  ];
   const curTwist = pose['armTwist' + side];
   const curElbow = pose['elbow' + side];
   if (forearmOK(elbow, dirFor(curTwist, curElbow), headC)) return;
 
   const [lo, hi] = LIMITS.armTwist;
-  // 先只動扭轉：使用者要的彎曲程度得以保留
   for (let d = 5; d <= 180; d += 5) {
     for (const t of [curTwist + d, curTwist - d]) {
       if (t < lo || t > hi) continue;
       if (forearmOK(elbow, dirFor(t, curElbow), headC)) { pose['armTwist' + side] = t; return; }
     }
   }
-  // 扭轉全掃過仍不行（手肘本身已經在身體裡），才退而減少彎曲
   for (let e = curElbow - 10; e >= 0; e -= 10) {
     for (let d = 0; d <= 180; d += 5) {
       for (const t of d === 0 ? [curTwist] : [curTwist + d, curTwist - d]) {
@@ -336,18 +518,9 @@ function fixForearm(pose, side) {
       }
     }
   }
-  pose['elbow' + side] = 0;   // 完全無解時把前臂打直，至少不會折進身體
+  pose['elbow' + side] = 0;
 }
 
-/**
- * 關節陷入軀幹或頭部的深度（正值＝在裡面多深）。
- * 拖曳時用來否決「把手拖進身體裡」這種結果。
- */
-export function bodyPenetration(joints, key) {
-  const t = torsoSDF(ap(tp(joints.Mwaist), joints[key]));
-  const h = Math.hypot(...sub(joints[key], joints.head)) - P.headR;
-  return -Math.min(t, h);
-}
 export const clonePose = src => clampPose(KEYS.reduce((o, k) => (o[k] = (src && k in src) ? +src[k] : 0, o), {}));
 
 /** 把 f 投影到垂直於 u 的平面上 */
