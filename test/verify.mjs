@@ -347,14 +347,19 @@ console.log('\n【碰撞修正：關節不得陷進身體】')
     kneeL: P.legR, kneeR: P.legR,
     footL: P.legR * P.foreScale, footR: P.legR * P.foreScale
   }
+  // 軀幹與頭要分開看：碰到軀幹幾乎不允許（手臂會消失），碰到頭則寬鬆
+  // ——「舉手抱頭」正是靠手掌沒入頭部一點來融接
   const deepest = pose => {
     const { joints: J } = SK.fk(pose)
-    let m = 0, at = ''
+    const inv = SK.tp(J.Mwaist)
+    let torso = 0, head = 0, at = ''
     for (const [k, r] of Object.entries(R)) {
-      const d = SK.bodyPenetration(J, k) / r
-      if (d > m) { m = d; at = k }
+      const dt = -SK.torsoSDF(SK.ap(inv, J[k])) / r
+      const dh = (P.headR - Math.hypot(...SK.sub(J[k], J.head))) / r
+      if (dt > torso) { torso = dt; at = k }
+      if (dh > head) head = dh
     }
-    return { m, at }
+    return { m: torso, head, at }
   }
   const thighOverlap = pose => {
     const { joints: J } = SK.fk(pose)
@@ -391,13 +396,20 @@ console.log('\n【碰撞修正：關節不得陷進身體】')
         `${(thighOverlap(SK.clonePose(null))*100).toFixed(0)}%`)
   check('盤腿坐不受影響',
         thighOverlap(SK.clonePose({ hipPitchL:80, hipOutL:45, kneeL:130, hipPitchR:80, hipOutR:45, kneeR:130 })) < 0.25)
-  for (const [n, pre] of Object.entries(PRESETS))
-    check(`${n.padEnd(10)} 陷入深度在門檻內`, deepest(SK.clonePose(pre)).m <= SK.BALL_PENETRATION_MAX + 0.01,
-          `${(deepest(SK.clonePose(pre)).m*100).toFixed(0)}%`)
+  for (const [n, pre] of Object.entries(PRESETS)) {
+    const d = deepest(SK.clonePose(pre))
+    check(`${n.padEnd(10)} 陷入軀幹在門檻內`, d.m <= SK.BALL_PENETRATION_MAX + 0.01,
+          `軀幹 ${(d.m*100).toFixed(0)}%（門檻 ${(SK.BALL_PENETRATION_MAX*100).toFixed(0)}%）`)
+    check(`${n.padEnd(10)} 接觸頭部在門檻內`, d.head <= SK.HEAD_CONTACT_MAX + 0.01,
+          `頭 ${(d.head*100).toFixed(0)}%（門檻 ${(SK.HEAD_CONTACT_MAX*100).toFixed(0)}%）`)
+  }
+  check('手臂至少有 85% 露在體外',
+        1 - SK.BALL_PENETRATION_MAX >= 0.85,
+        `門檻 ${(SK.BALL_PENETRATION_MAX*100).toFixed(0)}% → 露出 ${((1-SK.BALL_PENETRATION_MAX)*100).toFixed(0)}%`)
 
   // 全域保證：任何角度組合經過 clampPose 之後都不得超過門檻
   {
-    let worst = 0, at = '', ov = 0
+    let worst = 0, at = '', head = 0, ov = 0
     for (let i = 0; i < 4000; i++) {
       const raw = SK.KEYS.reduce((o, k) => {
         const L = SK.LIMITS[/[LR]$/.test(k) ? k.slice(0, -1) : k]
@@ -407,10 +419,13 @@ console.log('\n【碰撞修正：關節不得陷進身體】')
       const p = SK.clonePose(raw)
       const d = deepest(p)
       if (d.m > worst) { worst = d.m; at = d.at }
+      head = Math.max(head, d.head)
       ov = Math.max(ov, thighOverlap(p))
     }
-    check('隨機 4000 組任意角度都在門檻內', worst <= SK.BALL_PENETRATION_MAX + 0.01,
+    check('隨機 4000 組陷入軀幹都在門檻內', worst <= SK.BALL_PENETRATION_MAX + 0.01,
           `最深 ${(worst*100).toFixed(0)}%（${at}）`)
+    check('隨機 4000 組接觸頭部都在門檻內', head <= SK.HEAD_CONTACT_MAX + 0.01,
+          `最深 ${(head*100).toFixed(0)}%`)
     check('隨機 4000 組雙腿都不會疊死', ov < 0.55, `最大重疊 ${(ov*100).toFixed(0)}%`)
   }
 

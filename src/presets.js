@@ -46,7 +46,7 @@ export const PRESETS = {
   '07 側躺': {
     rootPitch: -90, rootRoll: 74, waistPitch: 10, headPitch: 15,
     hipPitchL: 25, kneeL: 50, hipPitchR: 0, kneeR: 20,
-    armPitchL: 15, elbowL: 60, armPitchR: 8, elbowR: 40
+    armPitchL: 19, elbowL: 60, armPitchR: 16, armOutR: 2, elbowR: 40
   },
   // headPitch 12 不只是為了姿態自然。頭是整具人偶最粗的部位（直徑 6.20，
   // 軀幹厚 4.74、四肢 4.03），躺下時會把整具人偶墊高、其餘部位懸在空中；

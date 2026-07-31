@@ -191,7 +191,7 @@ const dirFromSwing = (pitch, out, sx) => {
 };
 
 /**
- * 在球面上從 dir0 往外一圈一圈搜尋，回傳最接近且通過 accept 的方向。
+ * 在球面上從 dir0 往外一圈一圈搜尋，回傳最接近且通過 accept 的方向；找不到時回傳 null。
  * 由近而遠地找，修正量才會最小，使用者拖曳的意圖得以保留。
  */
 function nearestAcceptableDir(dir0, accept) {
@@ -211,7 +211,7 @@ function nearestAcceptableDir(dir0, accept) {
       if (accept(d)) return d;
     }
   }
-  return dir0;                       // 完全找不到，維持原狀
+  return null;                       // 完全找不到；呼叫端須自行退回安全值
 }
 
 /**
@@ -259,10 +259,32 @@ function writeSwing(pose, side, pitchKey, outKey, c, sx) {
 
 /**
  * 關節球容許陷入身體的深度上限（佔自身半徑）。
- * 肩、髖的關節點都在軀幹內部，所以手肘球本來就會埋一部分——
- * 八款預設最深 45%，明顯穿模的案例是 115~173%，門檻取 80% 可乾淨分開。
+ *
+ * 這個值直接決定「手臂還剩多少露在體外」：
+ *   陷入   0% → 球心剛好在表面上，露出 100%
+ *   陷入  15% → 露出 85%      ← 目前值
+ *   陷入  45% → 露出 55%
+ *   陷入  80% → 露出 20%（手臂幾乎看不見了）
+ *
+ * 早期取 80% 是照著「八款預設最深 45%」往上留餘裕訂的，但那個推論反了——
+ * 預設的值只說明哪些姿勢要保留，不代表更深也可以接受。
+ * 身體是有厚度的，手肘球一往內，整條手臂就跟著埋進去。
+ * 取 15% 等於要求手肘球心大致貼在身體輪廓上，再往內手臂就會消失。
  */
-export const BALL_PENETRATION_MAX = 0.80;
+export const BALL_PENETRATION_MAX = 0.15;
+
+/**
+ * 肢體碰到「頭」的容許量比碰到軀幹寬鬆——「舉手抱頭」就是靠手掌沒入頭部一點來融接。
+ * 01 舉手抱頭的手掌是 38%，取 0.50 留餘裕。
+ */
+export const HEAD_CONTACT_MAX = 0.50;
+
+/**
+ * 兩條大腿之間的容許重疊（佔腿半徑）。
+ * 髖關節間距 1.035、腿半徑 0.65，雙腿併攏時本來就重疊 41%——
+ * 這是造型的一部分，門檻必須高於它；明顯疊死的案例是 97~200%。
+ */
+export const THIGH_OVERLAP_MAX = 0.60;
 
 /**
  * 兩條線段之間的最短距離（解析解）。
@@ -341,10 +363,11 @@ export function clampPose(pose) {
     Mh[1][2] * P.headDist,
     P.headPivotZ + Mh[2][2] * P.headDist
   ];
-  const bodyPen = (pWaist, r) => Math.max(
-    -torsoSDF(pWaist),
-    P.headR - Math.hypot(pWaist[0] - headC[0], pWaist[1] - headC[1], pWaist[2] - headC[2])
-  ) / r;
+  // 軀幹與頭分開判斷：碰到軀幹幾乎不允許（手臂會消失），碰到頭則寬鬆一些
+  const bodyOK = (pWaist, r) =>
+    -torsoSDF(pWaist) / r <= BALL_PENETRATION_MAX &&
+    (P.headR - Math.hypot(pWaist[0] - headC[0], pWaist[1] - headC[1], pWaist[2] - headC[2])) / r
+      <= HEAD_CONTACT_MAX;
 
   // 第 2＋4 層：手臂。肩關節後方區域（解剖）與手肘球不得陷入身體（幾何）一起判斷，
   // 在兩者的交集上找最接近原方向的解。
@@ -356,13 +379,17 @@ export function clampPose(pose) {
       const s2 = snapDir(d, sx, 'armPitch', 'armOut');                 // 只認角度區間表達得出來的方向
       if (clampArmSwing(s2.dir) !== s2.dir) return false;              // 落在肩關節可及區域外
       const e = [shoulder[0] + s2.dir[0] * P.upArm, shoulder[1] + s2.dir[1] * P.upArm, shoulder[2] + s2.dir[2] * P.upArm];
-      return bodyPen(e, P.armR) <= BALL_PENETRATION_MAX;
+      return bodyOK(e, P.armR);
     };
     if (!accept(v)) {
       const c = nearestAcceptableDir(clampArmSwing(v), accept);
-      const s2 = snapDir(c, sx, 'armPitch', 'armOut');
-      pose['armPitch' + side] = s2.pitch;
-      pose['armOut' + side] = s2.out;
+      if (c) {
+        const s2 = snapDir(c, sx, 'armPitch', 'armOut');
+        pose['armPitch' + side] = s2.pitch;
+        pose['armOut' + side] = s2.out;
+      } else {
+        pose['armOut' + side] = 0;          // 找不到就先收回中立位，避免卡在錯的地方
+      }
     }
   }
 
@@ -390,17 +417,23 @@ export function clampPose(pose) {
         const accept = d => {
           const s2 = snapDir(d, sx, 'hipPitch', 'hipOut');
           const k = kneeRoot(sx, s2.dir);
-          if (bodyPen(ap(Wt, k), P.legR) > BALL_PENETRATION_MAX) return false;
+          if (!bodyOK(ap(Wt, k), P.legR)) return false;
           const hip = hipRoot(sx);
           const gap = segSegDist(hip, k, oHip, oKnee);   // 整條大腿對整條大腿
-          return (2 * P.legR - gap) / P.legR <= BALL_PENETRATION_MAX;
+          return (2 * P.legR - gap) / P.legR <= THIGH_OVERLAP_MAX;
         };
         const cur = dirOf(side);
         if (accept(cur)) continue;
         const c = nearestAcceptableDir(cur, accept);
-        const s2 = snapDir(c, sx, 'hipPitch', 'hipOut');
-        pose['hipPitch' + side] = s2.pitch;
-        pose['hipOut' + side] = s2.out;
+        if (c) {
+          const s2 = snapDir(c, sx, 'hipPitch', 'hipOut');
+          pose['hipPitch' + side] = s2.pitch;
+          pose['hipOut' + side] = s2.out;
+        } else {
+          // 對側那條腿也越過中線時，兩邊會互相卡死而找不到任何解。
+          // 先把這條收回中立位，下一輪對方就有空間可以修。
+          pose['hipOut' + side] = 0;
+        }
         moved = true;
       }
       if (!moved) break;
@@ -412,7 +445,7 @@ export function clampPose(pose) {
   {
     const W = rotM(-pose.waistPitch, 0, pose.waistTwist);
     const Wt = tp(W);
-    for (const side of ['L', 'R']) fixShin(pose, side, W, Wt, headC, bodyPen);
+    for (const side of ['L', 'R']) fixShin(pose, side, W, Wt, bodyOK);
   }
   return pose;
 }
@@ -422,7 +455,7 @@ export function clampPose(pose) {
  * 膝蓋是單自由度、沒有扭轉可調，唯一的手段就是改變彎曲角度；
  * 從目前值往兩側搜尋最接近的可用值，修正量才最小。
  */
-function fixShin(pose, side, W, Wt, headC, bodyPen) {
+function fixShin(pose, side, W, Wt, bodyOK) {
   const sx = side === 'L' ? -1 : 1;
   const hip = ap(W, [sx * P.hipX, 0, P.hipZ]);
   const Mth = rotM(pose['hipPitch' + side], -sx * pose['hipOut' + side], 0);
@@ -438,7 +471,7 @@ function fixShin(pose, side, W, Wt, headC, bodyPen) {
     for (let i = 4; i <= 16; i++) {          // 跳過靠近膝蓋的前段，那裡本來就與大腿相接
       const t = (i / 16) * P.loLeg;
       const p = [knee[0] + dir[0]*t, knee[1] + dir[1]*t, knee[2] + dir[2]*t];
-      if (bodyPen(ap(Wt, p), rShin) > BALL_PENETRATION_MAX) return false;
+      if (!bodyOK(ap(Wt, p), rShin)) return false;
     }
     return true;
   };
@@ -470,9 +503,10 @@ function forearmOK(elbow, dir, headC) {
   }
   if (inside / (N + 1) > FOREARM_BURIED_MAX) return false;
   const hand = [elbow[0] + dir[0] * P.loArm, elbow[1] + dir[1] * P.loArm, elbow[2] + dir[2] * P.loArm];
-  if (-torsoSDF(hand) > BALL_PENETRATION_MAX * P.armR * P.foreScale) return false;
+  const rWrist = P.armR * P.foreScale;
+  if (-torsoSDF(hand) > BALL_PENETRATION_MAX * rWrist) return false;
   const dh = Math.hypot(hand[0] - headC[0], hand[1] - headC[1], hand[2] - headC[2]);
-  return P.headR - dh <= 0.5 * P.armR * P.foreScale;
+  return P.headR - dh <= HEAD_CONTACT_MAX * rWrist;
 }
 
 /**
