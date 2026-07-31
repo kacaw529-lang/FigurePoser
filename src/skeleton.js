@@ -287,6 +287,22 @@ export const HEAD_CONTACT_MAX = 0.50;
 export const THIGH_OVERLAP_MAX = 0.60;
 
 /**
+ * 手肘可以往身體中線靠多近（軀幹座標的內向座標，0 = 中線，負值 = 仍在自己那一側）。
+ *
+ * 這是關節活動範圍的限制，不是碰撞——手臂往前繞過胸前時手肘在體外，
+ * 碰撞檢查不會抱怨，但肩關節的水平內收本來就到不了那麼遠。
+ * 實測「抱胸」這種極限動作，手肘也只到 −0.12（還沒碰到中線），
+ * 所以規則可以很乾脆：手肘不得越過中線。
+ */
+export const ELBOW_MIDLINE_MAX = 0;
+
+/**
+ * 膝蓋可以往中線靠多近。比手肘寬鬆一些——「兩腳交叉站」是常見動作，
+ * 膝蓋確實會稍微越過中線，但越不過太多。
+ */
+export const KNEE_MIDLINE_MAX = 0.30;
+
+/**
  * 兩條線段之間的最短距離（解析解）。
  * 只檢查膝蓋球對另一條大腿不夠——兩腿同時內收時膝蓋會互相錯開，
  * 但兩條大腿在中間交叉成 X，非得用線段對線段才抓得到。
@@ -379,6 +395,7 @@ export function clampPose(pose) {
       const s2 = snapDir(d, sx, 'armPitch', 'armOut');                 // 只認角度區間表達得出來的方向
       if (clampArmSwing(s2.dir) !== s2.dir) return false;              // 落在肩關節可及區域外
       const e = [shoulder[0] + s2.dir[0] * P.upArm, shoulder[1] + s2.dir[1] * P.upArm, shoulder[2] + s2.dir[2] * P.upArm];
+      if (-sx * e[0] > ELBOW_MIDLINE_MAX) return false;      // 手肘越過身體中線
       return bodyOK(e, P.armR);
     };
     if (!accept(v)) {
@@ -417,6 +434,9 @@ export function clampPose(pose) {
         const accept = d => {
           const s2 = snapDir(d, sx, 'hipPitch', 'hipOut');
           const k = kneeRoot(sx, s2.dir);
+          // 腿接在骨盆上，所以中線要以骨盆座標為準；用軀幹座標的話，
+          // 腰一扭轉就會把原本正常的腿判成越線
+          if (-sx * k[0] > KNEE_MIDLINE_MAX) return false;
           if (!bodyOK(ap(Wt, k), P.legR)) return false;
           const hip = hipRoot(sx);
           const gap = segSegDist(hip, k, oHip, oKnee);   // 整條大腿對整條大腿

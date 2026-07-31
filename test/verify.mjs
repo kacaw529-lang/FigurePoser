@@ -429,6 +429,46 @@ console.log('\n【碰撞修正：關節不得陷進身體】')
     check('隨機 4000 組雙腿都不會疊死', ov < 0.55, `最大重疊 ${(ov*100).toFixed(0)}%`)
   }
 
+  // 手肘不得越過身體中線——這是關節活動範圍的限制，碰撞檢查抓不到：
+  // 手臂往前繞過胸前時手肘在體外，但肩關節的水平內收本來就到不了那麼遠
+  {
+    // 手肘以軀幹為準（手臂接在軀幹上）；膝蓋以骨盆為準（腿接在骨盆上，
+    // 用軀幹座標的話，腰一扭轉就會把原本正常的腿判成越線）
+    const inward = (pose, side, joint) => {
+      const sx = side === 'L' ? -1 : 1
+      const { joints: J } = SK.fk(pose)
+      const M = joint === 'elbow' ? SK.tp(J.Mwaist) : SK.tp(J.Mroot)
+      return -sx * SK.ap(M, J[joint + side])[0]
+    }
+    const raw = SK.KEYS.reduce((o, k) => (o[k] = 0, o), {})
+    raw.armPitchL = 180; raw.armOutL = 90
+    check('未修正時手肘會越過中線', inward(raw, 'L', 'elbow') > 0.5,
+          `內向座標 ${inward(raw,'L','elbow').toFixed(2)}（0 = 中線）`)
+    // 抱胸這種極限動作手肘只到 −0.12，仍應完全可用
+    const hug = SK.clonePose({ armPitchL: 25, armOutL: -30, armTwistL: -40, elbowL: 120 })
+    check('抱胸不受影響', inward(hug, 'L', 'elbow') < 0 && inward(hug, 'L', 'elbow') > -0.3,
+          `內向座標 ${inward(hug,'L','elbow').toFixed(2)}`)
+    let we = -9, wk = -9
+    for (let i = 0; i < 3000; i++) {
+      const r2 = SK.KEYS.reduce((o, k) => {
+        const L = SK.LIMITS[/[LR]$/.test(k) ? k.slice(0, -1) : k]
+        o[k] = L ? L[0] + Math.random() * (L[1] - L[0]) : 0
+        return o
+      }, {})
+      const p = SK.clonePose(r2)
+      for (const s of ['L', 'R']) {
+        we = Math.max(we, inward(p, s, 'elbow'))
+        wk = Math.max(wk, inward(p, s, 'knee'))
+      }
+    }
+    check('隨機 3000 組手肘都沒越線', we <= SK.ELBOW_MIDLINE_MAX + 0.01, `最內 ${we.toFixed(2)}`)
+    check('隨機 3000 組膝蓋都在限制內', wk <= SK.KNEE_MIDLINE_MAX + 0.01, `最內 ${wk.toFixed(2)}`)
+    for (const [n, pre] of Object.entries(PRESETS))
+      check(`${n.padEnd(10)} 手肘在自己那一側`,
+            Math.max(inward(SK.clonePose(pre), 'L', 'elbow'), inward(SK.clonePose(pre), 'R', 'elbow')) <= 0,
+            `${Math.max(inward(SK.clonePose(pre),'L','elbow'), inward(SK.clonePose(pre),'R','elbow')).toFixed(2)}`)
+  }
+
   // 預設一個都不能被改動
   let touched = 0
   for (const pre of Object.values(PRESETS)) {

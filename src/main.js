@@ -14,7 +14,7 @@ import { analysePrintability } from './printability.js';
  * 更新網站後若看不出變化，先確認這裡的號碼有沒有跟著變——
  * GitHub Pages 對 JS 檔會快取十分鐘，多半是瀏覽器還在用舊檔，按 Ctrl+Shift+R 即可。
  */
-const VERSION = 'v2.3.0';
+const VERSION = 'v2.4.0';
 
 const $ = id => document.getElementById(id);
 $('ver').textContent = VERSION;
