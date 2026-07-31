@@ -254,6 +254,57 @@ console.log('\n【反解往返】')
   check('頭部傾角受限制', over===0, `超出 ${over}`)
 }
 
+console.log('\n【肩關節後方的可及範圍】')
+{
+  // 人體：手臂垂下往後伸展 50~60°；手臂平舉時往後的水平外展只有 20~30°
+  const swing = pose => {
+    const { joints: J } = SK.fk(pose)
+    const v = SK.ap(SK.tp(J.Mwaist), SK.norm(SK.sub(J.elbowR, J.shoulderR)))
+    return {
+      theta: Math.acos(SK.clamp(-v[2], -1, 1)) * 180 / Math.PI,
+      az: Math.abs(Math.atan2(v[0], v[1]) * 180 / Math.PI)
+    }
+  }
+  const at = (p, o) => {
+    const raw = SK.KEYS.reduce((a, k) => (a[k] = 0, a), {})
+    raw.armPitchR = p; raw.armOutR = o
+    return swing(SK.clonePose(raw))
+  }
+  const back = at(-90, 0)      // 想讓手臂水平往正後方
+  check('手臂不能水平往正後方伸', back.theta <= SK.SHOULDER_EXTENSION_MAX + 1,
+        `仰角 ${back.theta.toFixed(0)}°（上限 ${SK.SHOULDER_EXTENSION_MAX}°）`)
+  const up = at(-120, 0)       // 想讓手臂往後上舉
+  check('手臂不能往後上舉', up.theta <= SK.SHOULDER_EXTENSION_MAX + 1, `仰角 ${up.theta.toFixed(0)}°`)
+  const horiz = at(-60, 90)    // 平舉再往後
+  check('平舉往後受水平外展上限約束', horiz.theta <= 90 + 1,
+        `仰角 ${horiz.theta.toFixed(0)}° 方位 ${horiz.az.toFixed(0)}°`)
+  check('往前舉不受影響', at(150, 0).theta > 145, `仰角 ${at(150,0).theta.toFixed(0)}°`)
+  check('側舉不受影響', at(0, 170).theta > 160, `仰角 ${at(0,170).theta.toFixed(0)}°`)
+}
+
+console.log('\n【前臂不得折進軀幹】')
+{
+  const buried = pose => {
+    const { joints: J } = SK.fk(pose)
+    let n = 0
+    for (let i = 0; i <= 40; i++) {
+      const t = i / 40
+      const p = [0,1,2].map(k => J.elbowR[k] + (J.handR[k] - J.elbowR[k]) * t)
+      if (SK.torsoSDF(SK.ap(SK.tp(J.Mwaist), p)) < 0) n++
+    }
+    return n / 41
+  }
+  const raw = SK.KEYS.reduce((o, k) => (o[k] = 0, o), {})
+  raw.armTwistR = -88; raw.elbowR = 86
+  check('未修正時前臂整支埋在軀幹裡', buried(raw) > 0.9, `${(buried(raw)*100).toFixed(0)}%`)
+  check('修正後降到門檻以下', buried(SK.clonePose(raw)) <= 0.60, `${(buried(SK.clonePose(raw))*100).toFixed(0)}%`)
+  check('修正只動扭轉、保留手肘彎曲', Math.abs(SK.clonePose(raw).elbowR - 86) < 1,
+        `肘 ${SK.clonePose(raw).elbowR.toFixed(0)}°`)
+  for (const [n, pre] of Object.entries(PRESETS))
+    check(`${n.padEnd(10)} 前臂未埋入軀幹`, buried(SK.clonePose(pre)) <= 0.60,
+          `${(buried(SK.clonePose(pre))*100).toFixed(0)}%`)
+}
+
 console.log('\n【肩關節可及方向】')
 {
   // 手臂方向以「離正下方的仰角 θ」「方位角 φ」表示，φ=0 前、90 側、180 後
@@ -335,11 +386,14 @@ console.log('\n【內收受身體阻擋】')
 console.log('\n【不能把關節拖進身體裡】')
 {
   const depth = (pose, key) => SK.bodyPenetration(SK.fk(pose).joints, key)
-  // 內收受限之後仍有辦法把關節埋進身體：手臂垂著、外旋 90° 再把前臂往內折
-  const bad = SK.clonePose({ armTwistR: -90, elbowR: 90 })
+  // 前臂折進軀幹的情形已由 clampPose 自動修正（掃描扭轉、必要時再減少彎曲）
+  const raw = SK.KEYS.reduce((o, k) => (o[k] = 0, o), {})
+  raw.armTwistR = -90; raw.elbowR = 90
   const rWrist = P.armR * P.foreScale
-  check('偵測得到手掌被身體吞掉', depth(bad, 'handR') > rWrist,
-        `陷入 ${depth(bad,'handR').toFixed(2)}，前臂半徑 ${rWrist.toFixed(2)}`)
+  check('未修正時手掌確實被身體吞掉', depth(raw, 'handR') > rWrist,
+        `陷入 ${depth(raw,'handR').toFixed(2)}，前臂半徑 ${rWrist.toFixed(2)}`)
+  check('clampPose 會自動把前臂轉出來', depth(SK.clonePose(raw), 'handR') <= rWrist,
+        `修正後 ${depth(SK.clonePose(raw),'handR').toFixed(2)}`)
   // 正常姿勢不能誤判
   let worst = 0, who = ''
   for (const [n, pre] of Object.entries(PRESETS)) {

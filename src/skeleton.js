@@ -76,8 +76,10 @@ P.headPivotZ = P.torsoH - 0.50;
 P.headDist   = 1.35;
 export const HEAD_TILT_MAX = 45;
 
-/** 肩關節往後伸展的上限（度）。人體約 50~60 */
+/** 肩關節往後伸展的上限（度）。手臂垂下往後伸展，人體約 50~60 */
 export const SHOULDER_EXTENSION_MAX = 60;
+/** 手臂平舉時往後的水平外展上限（度）。人體約 20~30 */
+export const SHOULDER_HORIZ_EXTENSION_MAX = 30;
 
 /**
  * 關節活動範圍，依人體實際可動範圍（ROM）設定，數值取臨床常用區間的寬端。
@@ -166,9 +168,14 @@ export function clampArmSwing(v) {
   const theta = deg(Math.acos(clamp(-v[2], -1, 1)));
   const azRad = Math.atan2(v[0], v[1]);
   const az = Math.abs(deg(azRad));
-  const thetaMax = az <= 90
-    ? 180
-    : 180 - (180 - SHOULDER_EXTENSION_MAX) * (az - 90) / 90;
+  // 後方的可及範圍分兩段：
+  //   方位 90→120（正側往後 30°）：仰角上限由 180° 收到 90°（手臂只能到水平）
+  //   方位 120→180（再往後到正後方）：仰角上限由 90° 收到 60°（垂下後伸的極限）
+  // 早期只用單一直線，會放行「手臂水平往正後方伸」這種做不到的姿勢。
+  const knee = 90 + SHOULDER_HORIZ_EXTENSION_MAX;
+  const thetaMax = az <= 90 ? 180
+    : az <= knee ? 180 - (180 - 90) * (az - 90) / SHOULDER_HORIZ_EXTENSION_MAX
+    : 90 - (90 - SHOULDER_EXTENSION_MAX) * (az - knee) / (180 - knee);
   if (theta <= thetaMax) return v;
   const t = thetaMax * D, s = Math.sin(t);
   return [s * Math.sin(azRad), s * Math.cos(azRad), -Math.cos(t)];
@@ -249,8 +256,87 @@ export function clampPose(pose) {
   for (const side of ['L', 'R']) {
     fix(side, 'armPitch', 'armOut', clampArmDir);
     fix(side, 'hipPitch', 'hipOut', clampLegDir);
+    fixForearm(pose, side);
   }
   return pose;
+}
+
+/**
+ * 前臂是否可接受。兩個條件都要成立：
+ *   1. 埋進軀幹的長度比例不超過上限（八款預設最高 34%，明顯穿透的案例是 85~100%）
+ *   2. 手掌那一點不能整顆陷進軀幹裡（只看軀幹，手放在頭上是刻意的）
+ * 只看比例會漏掉「前臂後半段連同手掌沒入身體」的情形，兩者要一起判斷。
+ */
+const FOREARM_BURIED_MAX = 0.55;
+function forearmOK(elbow, dir, headC) {
+  let inside = 0;
+  const N = 16;
+  for (let i = 0; i <= N; i++) {
+    const t = (i / N) * P.loArm;
+    if (torsoSDF([elbow[0] + dir[0] * t, elbow[1] + dir[1] * t, elbow[2] + dir[2] * t]) < 0) inside++;
+  }
+  if (inside / (N + 1) > FOREARM_BURIED_MAX) return false;
+  const hand = [elbow[0] + dir[0] * P.loArm, elbow[1] + dir[1] * P.loArm, elbow[2] + dir[2] * P.loArm];
+  if (-torsoSDF(hand) > P.armR * P.foreScale) return false;
+  // 手掌可以輕觸頭部（「舉手抱頭」就是靠這點融接），但不能整顆沒入
+  const dh = Math.hypot(hand[0] - headC[0], hand[1] - headC[1], hand[2] - headC[2]);
+  return P.headR - dh <= 0.5 * P.armR * P.foreScale;
+}
+
+/**
+ * 前臂折進軀幹裡的修正。
+ *
+ * 扭轉 0 時手肘往身體前方折，前臂會離開軀幹；但扭轉接近 ±90 時折彎方向轉到側面，
+ * 對內側那一邊來說就是直接折進身體。這裡沿著扭轉角往兩側搜尋最接近的可用值，
+ * 只動扭轉、不動手肘彎曲，使用者想要的彎曲程度得以保留。
+ */
+function fixForearm(pose, side) {
+  const sx = side === 'L' ? -1 : 1;
+  const A = rotM(pose['armPitch' + side], -sx * pose['armOut' + side], 0);
+  const base = elbowTwistBase(A);
+  const shoulder = [sx * P.shoulderX, 0, P.shoulderZ];
+  const elbow = [
+    shoulder[0] + A[0][2] * -P.upArm,
+    shoulder[1] + A[1][2] * -P.upArm,
+    shoulder[2] + A[2][2] * -P.upArm
+  ];
+  const dirFor = (twistDeg, elbowDeg) => {
+    const M = mul(mul(A, Rz(base + (-sx * twistDeg) * D)), Rx(elbowDeg * D));
+    return [-M[0][2], -M[1][2], -M[2][2]];
+  };
+  // 頭部中心（軀幹座標）；頭會隨頸部傾斜移動，必須實際算出來
+  const Mhead = rotM(-pose.headPitch, pose.headRoll, 0);
+  const headC = [
+    Mhead[0][2] * P.headDist,
+    Mhead[1][2] * P.headDist,
+    P.headPivotZ + Mhead[2][2] * P.headDist
+  ];
+  const curTwist = pose['armTwist' + side];
+  const curElbow = pose['elbow' + side];
+  if (forearmOK(elbow, dirFor(curTwist, curElbow), headC)) return;
+
+  const [lo, hi] = LIMITS.armTwist;
+  // 先只動扭轉：使用者要的彎曲程度得以保留
+  for (let d = 5; d <= 180; d += 5) {
+    for (const t of [curTwist + d, curTwist - d]) {
+      if (t < lo || t > hi) continue;
+      if (forearmOK(elbow, dirFor(t, curElbow), headC)) { pose['armTwist' + side] = t; return; }
+    }
+  }
+  // 扭轉全掃過仍不行（手肘本身已經在身體裡），才退而減少彎曲
+  for (let e = curElbow - 10; e >= 0; e -= 10) {
+    for (let d = 0; d <= 180; d += 5) {
+      for (const t of d === 0 ? [curTwist] : [curTwist + d, curTwist - d]) {
+        if (t < lo || t > hi) continue;
+        if (forearmOK(elbow, dirFor(t, e), headC)) {
+          pose['armTwist' + side] = t;
+          pose['elbow' + side] = e;
+          return;
+        }
+      }
+    }
+  }
+  pose['elbow' + side] = 0;   // 完全無解時把前臂打直，至少不會折進身體
 }
 
 /**
