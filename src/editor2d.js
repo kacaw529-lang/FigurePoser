@@ -189,8 +189,8 @@ export class Editor2D {
       pose['armOut' + s] = lim('armOut', r.out);
     } else if (h.type === 'arm1') {
       // 手掌同時決定扭轉與彎曲，前臂才會真的指向拖曳的位置
-      const r = solveArmHand(J['Mup' + s], pose['armTwist' + s], sub(target, J['elbow' + s]), sx);
-      pose['armTwist' + s] = lim('armTwist', r.twist);
+      const r = solveArmHand(J['Aup' + s], J['twistBase' + s], sub(target, J['elbow' + s]), sx);
+      if (r.twist !== null) pose['armTwist' + s] = lim('armTwist', r.twist);
       pose['elbow' + s] = lim('elbow', r.elbow);
     } else if (h.type === 'leg2') {
       const r = solve2(J.Mroot, sub(target, J['hip' + s]), sx);

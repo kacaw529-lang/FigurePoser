@@ -264,6 +264,37 @@ export function bodyPenetration(joints, key) {
 }
 export const clonePose = src => clampPose(KEYS.reduce((o, k) => (o[k] = (src && k in src) ? +src[k] : 0, o), {}));
 
+/** 把 f 投影到垂直於 u 的平面上 */
+const perp = (f, u) => {
+  const d = f[0] * u[0] + f[1] * u[1] + f[2] * u[2];
+  return [f[0] - d * u[0], f[1] - d * u[1], f[2] - d * u[2]];
+};
+
+/**
+ * 手肘折彎方向的解剖學基準（回傳弧度）。
+ *
+ * 人的手肘一律往身體前方折：手臂垂著時往前、舉高時往前下、前平舉時往上（二頭彎舉）。
+ * 但歐拉角分解出來的預設折彎方向，只有手臂垂著時才剛好正確——
+ * 手臂舉高時整整差 180°，於是「扭轉 0」就變成手肘往後翻的馬腿姿勢。
+ *
+ * 這裡算出一個基準角，讓扭轉 0 永遠對應解剖學方向；
+ * 扭轉參數因此變成「相對於自然折彎方向的偏移」，±90 的上限也就等於
+ * 「折彎方向最多偏到側面，永遠不會翻到後面」——手肘反折在結構上就不可能發生。
+ *
+ * @param {number[][]} A 扭轉之前的上臂座標系（軀幹座標）
+ */
+export function elbowTwistBase(A) {
+  const e1 = [A[0][0], A[1][0], A[2][0]];
+  const e2 = [A[0][1], A[1][1], A[2][1]];
+  const u  = [-A[0][2], -A[1][2], -A[2][2]];                       // 上臂朝向
+  let b = perp([0, 1, 0], u);                                      // 軀幹正前方
+  if (Math.hypot(b[0], b[1], b[2]) < 0.15) b = perp([0, 0, 1], u);  // 手臂指向正前或正後時改用上方
+  b = norm(b);
+  return Math.atan2(
+    -(b[0] * e1[0] + b[1] * e1[1] + b[2] * e1[2]),
+      b[0] * e2[0] + b[1] * e2[1] + b[2] * e2[2]);
+}
+
 /**
  * 正向運動學
  * @returns {{joints:Object, parts:Array}} joints 供拖拉反解使用；parts 供繪製與建模
@@ -286,7 +317,11 @@ export function fk(pose) {
     const sx = (s === 'L') ? -1 : 1;
 
     const sh  = ap(Mwaist, [sx * P.shoulderX, 0, P.shoulderZ]);
-    const Mup = mul(Mwaist, rotM(pose['armPitch' + s], -sx * pose['armOut' + s], -sx * pose['armTwist' + s]));
+    // 先算出「扭轉之前」的上臂座標系，取得解剖學折彎基準，再把使用者的扭轉疊上去
+    const Alocal = rotM(pose['armPitch' + s], -sx * pose['armOut' + s], 0);
+    const tBase = elbowTwistBase(Alocal);
+    const Aup = mul(Mwaist, Alocal);
+    const Mup = mul(Aup, Rz(tBase + (-sx * pose['armTwist' + s]) * D));
     const el  = add(sh, ap(Mup, [0, 0, -P.upArm]));
     const Mfo = mul(Mup, Rx(pose['elbow' + s] * D));
     const hd  = add(el, ap(Mfo, [0, 0, -P.loArm]));
@@ -302,7 +337,8 @@ export function fk(pose) {
     const ft  = add(kn, ap(Mca, [0, 0, -P.loLeg]));
 
     Object.assign(J, {
-      ['shoulder' + s]: sh, ['Mup' + s]: Mup, ['elbow' + s]: el, ['Mfo' + s]: Mfo, ['hand' + s]: hd,
+      ['shoulder' + s]: sh, ['Mup' + s]: Mup, ['Aup' + s]: Aup, ['twistBase' + s]: tBase,
+      ['elbow' + s]: el, ['Mfo' + s]: Mfo, ['hand' + s]: hd,
       ['hip' + s]: hp, ['Mth' + s]: Mth, ['knee' + s]: kn, ['Mca' + s]: Mca, ['foot' + s]: ft
     });
   }
@@ -353,20 +389,18 @@ export function solve2(Mparent, dirWorld, sx) {
  *   e = acos(−u_z)              （與扭轉無關）
  *   t = atan2(−u_x, u_y)
  *
- * @param {number[][]} Mup 目前的上臂座標系
- * @param {number} currentTwist 目前的 armTwist 參數值
+ * @param {number[][]} Aup 扭轉之前的上臂座標系（fk 回傳的 AupL / AupR）
+ * @param {number} twistBase 解剖學折彎基準角（弧度，fk 回傳的 twistBaseL / twistBaseR）
  * @param {number[]} dirWorld 從手肘指向目標的世界座標方向
  * @param {number} sx 左為 −1、右為 +1
  */
-export function solveArmHand(Mup, currentTwist, dirWorld, sx) {
-  const applied = -sx * currentTwist;                       // 實際套用在矩陣裡的扭轉
-  const A = mul(Mup, Rz(-applied * D));                     // 扣掉扭轉，取回參考座標系
-  const u = ap(tp(A), norm(dirWorld));
+export function solveArmHand(Aup, twistBase, dirWorld, sx) {
+  const u = ap(tp(Aup), norm(dirWorld));
   const elbow = deg(Math.acos(clamp(-u[2], -1, 1)));
   const lateral = Math.hypot(u[0], u[1]);
-  // 前臂與上臂共線時扭轉無意義，維持原值避免亂跳
-  const twist = lateral < 1e-6 ? currentTwist : -deg(Math.atan2(-u[0], u[1])) * sx;
-  return { twist, elbow };
+  if (lateral < 1e-6) return { twist: null, elbow };   // 與上臂共線，扭轉無意義
+  const tTotal = Math.atan2(-u[0], u[1]);
+  return { twist: -deg(tTotal - twistBase) * sx, elbow };
 }
 
 /** 單自由度：投影到肢體可及的圓上，回傳彎曲角 */

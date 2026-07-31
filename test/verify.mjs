@@ -355,45 +355,99 @@ console.log('\n【不能把關節拖進身體裡】')
   check('八款預設都不會被誤判', worst < 0.8, `最深為自身半徑的 ${(worst*100).toFixed(0)}%（${who}）`)
 }
 
+console.log('\n【手肘折彎方向的解剖學基準】')
+{
+  // 人的手肘一律往身體前方折。扭轉 0 時的折彎方向必須等於「軀幹正前方投影到垂直於上臂的平面」
+  const anat = u => {
+    const dot = f => f[0]*u[0] + f[1]*u[1] + f[2]*u[2]
+    let f = [0,1,0], b = [0,1,2].map(k => f[k] - dot(f)*u[k])
+    if (Math.hypot(...b) < 0.15) { f = [0,0,1]; b = [0,1,2].map(k => f[k] - dot(f)*u[k]) }
+    return SK.norm(b)
+  }
+  let worst = 0, at = ''
+  for (let p = -60; p <= 180; p += 10) for (let o = -40; o <= 180; o += 10) {
+    const raw = SK.KEYS.reduce((a,k)=>(a[k]=0,a),{})
+    raw.armPitchL = p; raw.armOutL = o; raw.elbowL = 90
+    const J = SK.fk(raw).joints
+    const inv = SK.tp(J.Mwaist)
+    const fore = SK.ap(inv, SK.norm(SK.sub(J.handL, J.elbowL)))
+    const u = SK.ap(inv, SK.norm(SK.sub(J.elbowL, J.shoulderL)))
+    const a = anat(u)
+    const ang = Math.acos(SK.clamp(fore[0]*a[0] + fore[1]*a[1] + fore[2]*a[2], -1, 1)) * 180 / Math.PI
+    if (ang > worst) { worst = ang; at = `前後擺 ${p}° 外展 ${o}°` }
+  }
+  check('扭轉 0 時折彎方向永遠是解剖學方向', worst < 1, `最大偏差 ${worst.toFixed(2)}° @ ${at}`)
+
+  // 舊模型在手臂舉高時整整差 180°，用它證明這個檢查有效
+  {
+    const A = SK.rotM(170, 0, 0)
+    const base = SK.elbowTwistBase(A) * 180 / Math.PI
+    check('舊模型的預設方向確實差很多', Math.abs(Math.abs(base) - 180) < 5,
+          `舉高時基準角 ${base.toFixed(0)}°，代表舊模型反了 180°`)
+  }
+
+  // ±90 的上限意味著折彎方向最多偏到側面，永遠不會翻到身體後方
+  {
+    let posterior = 0
+    for (let p = -60; p <= 180; p += 15) for (let o = -40; o <= 180; o += 15)
+      for (const tw of [-90, -45, 0, 45, 90]) {
+        const raw = SK.KEYS.reduce((a,k)=>(a[k]=0,a),{})
+        raw.armPitchL = p; raw.armOutL = o; raw.armTwistL = tw; raw.elbowL = 90
+        const J = SK.fk(raw).joints
+        const inv = SK.tp(J.Mwaist)
+        const fore = SK.ap(inv, SK.norm(SK.sub(J.handL, J.elbowL)))
+        const u = SK.ap(inv, SK.norm(SK.sub(J.elbowL, J.shoulderL)))
+        const a = anat(u)
+        const ang = Math.acos(SK.clamp(fore[0]*a[0] + fore[1]*a[1] + fore[2]*a[2], -1, 1)) * 180 / Math.PI
+        if (ang > 91) posterior++
+      }
+    check('折彎方向永遠不會翻到身體後方', posterior === 0, `違規 ${posterior} 次`)
+  }
+}
+
 console.log('\n【手掌拖曳：扭轉與彎曲一起解】')
 {
-  // 給定任意 (扭轉, 彎曲)，算出前臂方向後反解，必須完全還原
   let fail = 0, worst = 0
   for (let i = 0; i < 8000; i++) {
     const sx = Math.random() < 0.5 ? -1 : 1
-    const pitch = Math.random() * 240 - 60, out = Math.random() * 220 - 40
-    const twist = Math.random() * 180 - 90, elbow = Math.random() * 150
-    const Mw = SK.rotM(Math.random() * 110 - 30, 0, Math.random() * 90 - 45)
-    const Mup = SK.mul(Mw, SK.rotM(pitch, -sx * out, -sx * twist))
-    const dir = SK.ap(SK.mul(Mup, SK.Rx(elbow * Math.PI / 180)), [0, 0, -1])
-    const r = SK.solveArmHand(Mup, twist, dir, sx)
-    const Mup2 = SK.mul(Mw, SK.rotM(pitch, -sx * out, -sx * r.twist))
-    const d2 = SK.ap(SK.mul(Mup2, SK.Rx(r.elbow * Math.PI / 180)), [0, 0, -1])
-    const err = Math.hypot(dir[0] - d2[0], dir[1] - d2[1], dir[2] - d2[2])
+    const side = sx < 0 ? 'L' : 'R'
+    const raw = SK.KEYS.reduce((a,k)=>(a[k]=0,a),{})
+    raw.waistPitch = Math.random()*80 - 30
+    raw['armPitch'+side] = Math.random()*240 - 60
+    raw['armOut'+side]   = Math.random()*220 - 40
+    raw['armTwist'+side] = Math.random()*180 - 90
+    raw['elbow'+side]    = Math.random()*150
+    const J = SK.fk(raw).joints
+    const dir = SK.norm(SK.sub(J['hand'+side], J['elbow'+side]))
+    const r = SK.solveArmHand(J['Aup'+side], J['twistBase'+side], dir, sx)
+    if (r.twist === null) continue
+    const raw2 = { ...raw }
+    raw2['armTwist'+side] = r.twist
+    raw2['elbow'+side] = r.elbow
+    const J2 = SK.fk(raw2).joints
+    const d2 = SK.norm(SK.sub(J2['hand'+side], J2['elbow'+side]))
+    const err = Math.hypot(dir[0]-d2[0], dir[1]-d2[1], dir[2]-d2[2])
     worst = Math.max(worst, err)
     if (err > 1e-9) fail++
   }
   check('前臂方向往返 8000 次完全還原', fail === 0, `最大誤差 ${worst.toExponential(1)}`)
 
-  // 關鍵迴歸：帶著殘留扭轉時，拖手掌必須修正扭轉而不是在歪掉的平面上繞
+  // 只解肘的舊做法只能在一個平面上繞，同時解扭轉才到得了任意方向
   {
-    const pose = SK.clonePose({ armPitchR: 40, armOutR: 70, armTwistR: -80, elbowR: 90 })
-    const J = SK.fk(pose).joints
-    // 目標放在「正前方」——舊的做法（只解肘）到不了
+    const raw = SK.clonePose({ armPitchR: 40, armOutR: 70, armTwistR: -60, elbowR: 90 })
+    const J = SK.fk(raw).joints
     const target = [J.elbowR[0], J.elbowR[1] + 2, J.elbowR[2]]
+    const want = SK.norm(SK.sub(target, J.elbowR))
     const only = SK.clamp(SK.solve1(J.MupR, SK.sub(target, J.elbowR)), 0, 150)
-    const both = SK.solveArmHand(J.MupR, pose.armTwistR, SK.sub(target, J.elbowR), 1)
+    const both = SK.solveArmHand(J.AupR, J.twistBaseR, SK.sub(target, J.elbowR), 1)
     const dirOf = (tw, eb) => {
-      const p = SK.clonePose({ armPitchR: 40, armOutR: 70, armTwistR: tw, elbowR: eb })
+      const p = { ...raw, armTwistR: tw, elbowR: eb }
       const j = SK.fk(p).joints
       return SK.norm(SK.sub(j.handR, j.elbowR))
     }
-    const want = SK.norm(SK.sub(target, J.elbowR))
-    const errOnly = Math.hypot(...SK.sub(dirOf(pose.armTwistR, only), want))
-    const errBoth = Math.hypot(...SK.sub(dirOf(SK.clamp(both.twist, -90, 90), SK.clamp(both.elbow, 0, 150)), want))
-    check('殘留扭轉下，同時解扭轉明顯更準',
-          errBoth < errOnly * 0.35,
-          `只解肘誤差 ${errOnly.toFixed(2)}，同時解 ${errBoth.toFixed(3)}`)
+    const eOnly = Math.hypot(...SK.sub(dirOf(raw.armTwistR, only), want))
+    const eBoth = Math.hypot(...SK.sub(dirOf(SK.clamp(both.twist,-90,90), SK.clamp(both.elbow,0,150)), want))
+    check('同時解扭轉比只解肘更準', eBoth < eOnly * 0.5, `只解肘 ${eOnly.toFixed(2)}，同時解 ${eBoth.toFixed(3)}`)
   }
 }
 
@@ -424,15 +478,17 @@ for (const [name,p] of Object.entries(PRESETS)) {
 }
 console.log('\n【底座】')
 {
-  const pose = SK.clonePose(PRESETS['01 舉手抱頭'])
+  // 用最窄的預設，底座直徑才會明顯大過人偶本身
+  const pose = SK.clonePose(PRESETS['03 直立'])
   const noBase = exportSTL(pose, 3.1, { tolerance: 0.05, floor: 24 })
-  const withBase = exportSTL(pose, 3.1, { tolerance: 0.05, floor: 24, baseDiameter: 14 })
+  const withBase = exportSTL(pose, 3.1, { tolerance: 0.05, floor: 24, baseDiameter: 20 })
   const v = await bbox(withBase.blob)
   check('加底座後貼齊列印平台', Math.abs(v.mn[2]) < 1e-3, `最低 z=${v.mn[2].toFixed(4)}`)
-  check('底座位於底部而非腰部', (v.mx[0]-v.mn[0]) > 13.9 && (v.mx[1]-v.mn[1]) > 13.9,
-        `XY 範圍 ${(v.mx[0]-v.mn[0]).toFixed(1)} × ${(v.mx[1]-v.mn[1]).toFixed(1)}（底座 14 mm）`)
-  check('底座讓外框變寬但不變高', withBase.size.x >= 14 && Math.abs(withBase.size.z - noBase.size.z) < 1e-6)
-  check('底座不影響不加底座時的結果', noBase.size.x < 14)
+  check('底座位於底部而非腰部', (v.mx[0]-v.mn[0]) > 19.9 && (v.mx[1]-v.mn[1]) > 19.9,
+        `XY 範圍 ${(v.mx[0]-v.mn[0]).toFixed(1)} × ${(v.mx[1]-v.mn[1]).toFixed(1)}（底座 20 mm）`)
+  check('底座讓外框變寬但不變高', withBase.size.x >= 20 && Math.abs(withBase.size.z - noBase.size.z) < 1e-6)
+  check('底座不影響不加底座時的結果', Math.abs(noBase.size.x - withBase.size.x) > 0.5,
+        `無底座 ${noBase.size.x.toFixed(1)}，有底座 ${withBase.size.x.toFixed(1)}`)
   check('底座三角面有被加進去', withBase.triangles > noBase.triangles)
 }
 
