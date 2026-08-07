@@ -14,7 +14,7 @@ import { analysePrintability } from './printability.js';
  * 更新網站後若看不出變化，先確認這裡的號碼有沒有跟著變——
  * GitHub Pages 對 JS 檔會快取十分鐘，多半是瀏覽器還在用舊檔，按 Ctrl+Shift+R 即可。
  */
-const VERSION = 'v2.5.0';
+const VERSION = 'v2.6.0';
 
 const $ = id => document.getElementById(id);
 $('ver').textContent = VERSION;
@@ -66,6 +66,8 @@ function beginChange(tag) {
 }
 
 function applySnapshot(s) {
+  // 只有尺寸真的變了才重新取景。復原姿勢時保留使用者自己轉好、縮好的視角
+  const sizeChanged = Math.abs(s.headDiameter - state.headDiameter) > 1e-6;
   Object.assign(state.pose, s.pose);
   state.headDiameter = s.headDiameter;
   state.baseDiameter = s.baseDiameter;
@@ -77,7 +79,8 @@ function applySnapshot(s) {
   markPreset(state.presetName);
   viewer?.setBase(state.baseDiameter);
   history.tag = null;               // 復原之後下一個動作一定要開新的一步
-  refresh(true);
+  if (window.__poser) window.__poser.lastReframe = sizeChanged;
+  refresh(sizeChanged);
   syncHistoryButtons();
 }
 
@@ -437,4 +440,4 @@ viewer?.frame(headRadius());
 window.__poserReady = true;   // 供 index.html 的載入失敗偵測使用
 
 // 除錯與測試用的掛勾：在瀏覽器主控台可以直接檢視目前狀態
-window.__poser = { state, editor, viewer, refresh, history, undo, redo };
+window.__poser = { state, editor, viewer, refresh, history, undo, redo, lastReframe: null };

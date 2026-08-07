@@ -10,6 +10,18 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { buildGeometries, disposeGeometries, buildFigure, applyPose, makeBaseMM } from './meshes.js';
 import { fk, boundingBox, STANDING_H } from './skeleton.js';
 
+/** 3D 取景的目標填滿比例。2D 視圖的人偶約佔可視高度 88%，這裡取 82% 留一點旋轉餘裕 */
+export const VIEW_FILL = 0.82;
+
+/**
+ * 由視角直接反推相機距離，讓 3D 的人偶大小與 2D 視圖相近。
+ * 透視相機的可視高度 = 2·d·tan(fov/2)，令人偶高度佔其中 fill 比例即可解出 d。
+ * 早期用「全高 × 2.4 + 30」這種硬湊的公式，結果人偶只佔 43%——比 2D 小了一半。
+ */
+export function cameraDistanceFor(standingHeightMM, fovDeg, fill = VIEW_FILL) {
+  return (standingHeightMM / fill) / (2 * Math.tan(fovDeg * Math.PI / 360));
+}
+
 export class Viewer3D {
   constructor(container) {
     this.el = container;
@@ -30,7 +42,7 @@ export class Viewer3D {
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.09;
     this.controls.enablePan = false;
-    this.controls.minDistance = 30;
+    this.controls.minDistance = 8;
     this.controls.maxDistance = 900;
 
     // 光線
@@ -146,7 +158,7 @@ export class Viewer3D {
   /** 依人偶大小把鏡頭拉到合適距離 */
   frame(headRadiusMM) {
     const h = STANDING_H * headRadiusMM;
-    const dist = h * 2.4 + 30;
+    const dist = cameraDistanceFor(h, this.camera.fov);
     const dir = this.camera.position.clone().sub(this.controls.target).normalize();
     this.camera.position.copy(this.controls.target).addScaledVector(dir, dist);
     this.grid.scale.setScalar(Math.max(h / 60, 0.25));

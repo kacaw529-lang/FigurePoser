@@ -843,6 +843,31 @@ console.log('\n【UI 串接】')
   check('切回免支撐姿勢時虛線清空', window.__poser.editor.highlight.size === 0)
 }
 
+console.log('\n【3D 取景與 2D 一致】')
+{
+  const V3 = await import('../src/viewer3d.js')
+  const { FRAME } = await import('../src/editor2d.js')
+  const FOV = 38
+  const fill3d = (headDiaMM) => {
+    const H = SK.STANDING_H * headDiaMM / 2
+    const d = V3.cameraDistanceFor(H, FOV)
+    return H / (2 * d * Math.tan(FOV * Math.PI / 360))
+  }
+  const fill2d = SK.STANDING_H / FRAME.hDiv
+  for (const hd of [4, 6.2, 20, 40])
+    check(`頭直徑 ${String(hd).padStart(4)} mm 的 3D 佔比一致`,
+          Math.abs(fill3d(hd) - V3.VIEW_FILL) < 0.01,
+          `${(fill3d(hd)*100).toFixed(0)}%`)
+  check('3D 佔比接近 2D', Math.abs(fill3d(6.2) - fill2d) < 0.10,
+        `3D ${(fill3d(6.2)*100).toFixed(0)}% vs 2D ${(fill2d*100).toFixed(0)}%`)
+  // 舊公式（全高×2.4+30）只有 43%，用它證明這個檢查有意義
+  {
+    const H = SK.STANDING_H * 3.1
+    const old = H / (2 * (H * 2.4 + 30) * Math.tan(FOV * Math.PI / 360))
+    check('舊公式確實明顯偏小', old < 0.5, `${(old*100).toFixed(0)}%`)
+  }
+}
+
 console.log('\n【復原／重做】')
 {
   const $ = id => document.getElementById(id)
@@ -899,6 +924,16 @@ console.log('\n【復原／重做】')
   hd.value = '20'; hd.dispatchEvent(new window.Event('input', { bubbles: true }))
   window.__poser.undo()
   check('頭部直徑也可以復原', hd.value === before, `${before} → 20 → ${hd.value}`)
+
+  // 復原姿勢時不該重設 3D 視角——使用者自己轉好、縮好的角度要保留
+  H.undo.length = 0; H.redo.length = 0; H.tag = null
+  clickPreset('03'); H.tag = null; clickPreset('08')
+  window.__poser.undo()
+  check('復原姿勢時不重設 3D 視角', window.__poser.lastReframe === false)
+  H.undo.length = 0; H.redo.length = 0; H.tag = null
+  hd.value = '20'; hd.dispatchEvent(new window.Event('input', { bubbles: true }))
+  window.__poser.undo()
+  check('但尺寸改變時要重新取景', window.__poser.lastReframe === true)
 
   // 按鈕狀態
   H.undo.length = 0; H.redo.length = 0; H.tag = null
