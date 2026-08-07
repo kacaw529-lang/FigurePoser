@@ -843,6 +843,49 @@ console.log('\n【UI 串接】')
   check('切回免支撐姿勢時虛線清空', window.__poser.editor.highlight.size === 0)
 }
 
+console.log('\n【2D 地面線】')
+{
+  const { Editor2D } = await import('../src/editor2d.js')
+  const ctx3 = new Proxy({}, { get: (t3, k) => k === 'canvas' ? {} : () => {} })
+  const mk3 = () => ({
+    getContext: () => ctx3, width: 0, height: 0,
+    getBoundingClientRect: () => ({ width: 400, height: 330, left: 0, top: 0 }),
+    classList: { add(){}, remove(){} }, addEventListener(){}, setPointerCapture(){}
+  })
+  const st3 = { pose: SK.clonePose(PRESETS['03 直立']), mirror: false }
+  const ed3 = new Editor2D(mk3(), mk3(), st3, () => {})
+  // 地面線必須畫在模型真正的底部，也就是匯出 STL 之後貼齊列印平台的位置
+  let worst = 0, at = ''
+  for (const [n, pre] of Object.entries(PRESETS)) {
+    Object.assign(st3.pose, SK.clonePose(pre))
+    const r = ed3.draw()
+    const err = Math.abs(r.groundZ - SK.boundingBox(st3.pose).min[2]) * 3.1
+    if (err > worst) { worst = err; at = n }
+  }
+  check('地面線與模型底部完全一致', worst < 0.001, `最大誤差 ${worst.toFixed(3)} mm（${at}）`)
+  // 舊算法（最低關節中心 − 0.9×腿半徑）在躺姿會差 0.5 mm 以上，用它證明檢查有效
+  {
+    const p = SK.clonePose(PRESETS['06 仰躺'])
+    const { joints: J } = SK.fk(p)
+    const old = Math.min(...SK.extremes(J).map(x => x[2])) - P.legR * 0.9
+    const err = Math.abs(old - SK.boundingBox(p).min[2]) * 3.1
+    check('舊算法確實會偏掉', err > 0.4, `${err.toFixed(2)} mm`)
+  }
+  // 接觸判定要用各自的半徑，否則躺姿會漏掉大部分著地部位
+  {
+    Object.assign(st3.pose, SK.clonePose(PRESETS['06 仰躺']))
+    ed3.draw()
+    const { joints: J } = SK.fk(st3.pose)
+    const g = SK.boundingBox(st3.pose).min[2]
+    const n = SK.contactPoints(J).filter(([p2, r2]) => p2[2] - r2 < g + 0.35).length
+    check('仰躺時多數部位判定為著地', n >= 10, `${n} 個部位`)
+  }
+  for (const [n, pre] of Object.entries(PRESETS)) {
+    Object.assign(st3.pose, SK.clonePose(pre))
+    check(`${n.padEnd(10)} 重心判定為穩定`, ed3.draw().stable)
+  }
+}
+
 console.log('\n【2D 取景不得裁切人偶】')
 {
   const { Editor2D } = await import('../src/editor2d.js')

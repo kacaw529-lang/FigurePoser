@@ -9,7 +9,8 @@
  */
 import {
   fk, solve2, solve1, solveHead, centerOfMass, extremes,
-  sub, clamp, ap, P, LR_KEYS, LIMITS, solveArmHand, clampPose, bodyPenetration
+  sub, clamp, ap, P, LR_KEYS, LIMITS, solveArmHand, clampPose, bodyPenetration,
+  boundingBox, contactPoints
 } from './skeleton.js';
 
 /**
@@ -281,11 +282,14 @@ export class Editor2D {
   draw() {
     const pose = this.state.pose;
     const { joints: J } = fk(pose);
-    const pts = extremes(J);
-    const groundZ = Math.min(...pts.map(p => p[2])) - P.legR * 0.9;
+    // 地面＝模型真正的最低點。用解析法算，與匯出的 STL 落地位置完全一致
+    const groundZ = boundingBox(pose).min[2];
     const com = centerOfMass(J);
 
-    const low = pts.filter(p => p[2] < groundZ + 1.1);
+    // 接觸地面的部位：各關節扣掉自身半徑後落在地面附近的
+    const low = contactPoints(J)
+      .filter(([p, r]) => p[2] - r < groundZ + 0.35)
+      .map(([p]) => p);
     let stable = false;
     if (low.length) {
       const xs = low.map(p => p[0]), ys = low.map(p => p[1]), pad = 0.38;

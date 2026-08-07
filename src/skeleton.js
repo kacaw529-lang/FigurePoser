@@ -754,6 +754,21 @@ export function centerOfMass(J) {
   return [c[0] / m, c[1] / m, c[2] / m];
 }
 
+/**
+ * 各關節與其半徑，用來判斷哪些部位接觸地面。
+ * 只看關節中心不夠——最低的可能是頭（半徑 1.0）也可能是手（0.53），
+ * 用同一個半徑去估地面會差到 0.5 mm 以上。
+ */
+export function contactPoints(J) {
+  const fs = P.foreScale;
+  const out = [[J.pelvis, P.torsoD / 2], [J.head, P.headR]];
+  for (const s of ['L', 'R']) {
+    out.push([J['shoulder' + s], P.armR], [J['elbow' + s], P.armR], [J['hand' + s], P.armR * fs],
+             [J['hip' + s], P.legR], [J['knee' + s], P.legR], [J['foot' + s], P.legR * fs]);
+  }
+  return out;
+}
+
 /** 所有端點，用於估算地面高度與支撐範圍 */
 export function extremes(J) {
   return ['pelvis', 'head', 'shoulderL', 'elbowL', 'handL', 'shoulderR', 'elbowR', 'handR',
