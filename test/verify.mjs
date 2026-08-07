@@ -843,6 +843,67 @@ console.log('\n【UI 串接】')
   check('切回免支撐姿勢時虛線清空', window.__poser.editor.highlight.size === 0)
 }
 
+console.log('\n【2D 取景不得裁切人偶】')
+{
+  const { Editor2D } = await import('../src/editor2d.js')
+  const ctx2 = new Proxy({}, { get: (t2, k) => k === 'canvas' ? {} : () => {} })
+  const mkCanvas = () => ({
+    getContext: () => ctx2, width: 0, height: 0,
+    getBoundingClientRect: () => ({ width: 400, height: 330, left: 0, top: 0 }),
+    classList: { add(){}, remove(){} }, addEventListener(){}, setPointerCapture(){}
+  })
+  const st2 = { pose: SK.clonePose(PRESETS['03 直立']), mirror: false }
+  const ed2 = new Editor2D(mkCanvas(), mkCanvas(), st2, () => {})
+  const clipped = pose => {
+    Object.assign(st2.pose, SK.clonePose(pose))
+    ed2.draw()
+    const J = SK.fk(st2.pose).joints
+    return ed2.views.some(v => {
+      const b = ed2._figureBounds(v, J)
+      return b.minX < -0.5 || b.maxX > v.w + 0.5 || b.minY < -0.5 || b.maxY > v.h + 0.5
+    })
+  }
+  // 沒有位移機制時，整體前傾 180° 會被下緣裁掉
+  {
+    Object.assign(st2.pose, SK.clonePose({ rootPitch: 180 }))
+    ed2.draw()
+    const v = ed2.views[0]
+    const J = SK.fk(st2.pose).joints
+    const saveO = [v.ox, v.oy]
+    v.ox = 0; v.oy = 0
+    const b = ed2._figureBounds(v, J)
+    const wouldClip = b.minY < -0.5 || b.maxY > v.h + 0.5
+    v.ox = saveO[0]; v.oy = saveO[1]
+    check('不平移的話前傾 180° 確實會被裁切', wouldClip,
+          `上下範圍 ${b.minY.toFixed(0)}~${b.maxY.toFixed(0)}，畫布高 ${v.h}`)
+  }
+  for (const [n, pre] of Object.entries(PRESETS))
+    check(`${n.padEnd(10)} 完整可見`, !clipped(pre))
+  for (const [n, pre] of [
+    ['前傾 180', { rootPitch: 180 }],
+    ['前傾 −180', { rootPitch: -180 }],
+    ['側傾 180', { rootRoll: 180 }],
+    ['前傾180+歡呼', { rootPitch: 180, armOutL: 150, armTwistL: 90, elbowL: 60, armOutR: 150, armTwistR: 90, elbowR: 60 }]
+  ]) check(`${n.padEnd(12)} 完整可見`, !clipped(pre))
+  {
+    let bad = 0
+    for (let i = 0; i < 800; i++) {
+      const raw = SK.KEYS.reduce((o, k) => {
+        const L = SK.LIMITS[/[LR]$/.test(k) ? k.slice(0, -1) : k]
+        o[k] = L ? L[0] + Math.random() * (L[1] - L[0]) : 0
+        return o
+      }, {})
+      if (clipped(raw)) bad++
+    }
+    check('隨機 800 組都完整可見', bad === 0, `被裁 ${bad} 次`)
+  }
+  // 常見姿勢不該被平移（畫面才不會無故飄移）
+  Object.assign(st2.pose, SK.clonePose(PRESETS['06 仰躺']))
+  ed2.draw()
+  check('躺姿等常見情形位移為 0', ed2.views.every(v => v.ox === 0 && v.oy === 0),
+        ed2.views.map(v => `${v.ox},${v.oy}`).join(' '))
+}
+
 console.log('\n【3D 取景與 2D 一致】')
 {
   const V3 = await import('../src/viewer3d.js')

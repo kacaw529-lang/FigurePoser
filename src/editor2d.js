@@ -78,10 +78,62 @@ export class Editor2D {
       v.scale = Math.min(v.w / FRAME.wDiv, v.h / FRAME.hDiv);
       v.cx = v.w / 2;
       v.cy = v.h * FRAME.cyRatio;
+      v.ox = 0; v.oy = 0;
     }
   }
 
-  _toScreen(v, p) { return [v.cx + v.px(p) * v.scale, v.cy - p[2] * v.scale]; }
+  _toScreen(v, p) {
+    return [v.cx + v.ox + v.px(p) * v.scale, v.cy + v.oy - p[2] * v.scale];
+  }
+
+  /**
+   * 人偶在畫面上實際佔的範圍（含肢體粗細）。
+   * 用來把超出邊界的部分推回畫面內。
+   */
+  _figureBounds(v, J) {
+    const s = v.scale;
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    const add = (p, r) => {
+      const q = this._toScreen(v, p), rp = r * s;
+      if (q[0] - rp < minX) minX = q[0] - rp;
+      if (q[0] + rp > maxX) maxX = q[0] + rp;
+      if (q[1] - rp < minY) minY = q[1] - rp;
+      if (q[1] + rp > maxY) maxY = q[1] + rp;
+    };
+    add(J.head, P.headR);
+    const fs = P.foreScale;
+    for (const side of ['L', 'R']) {
+      add(J['shoulder' + side], P.armR); add(J['elbow' + side], P.armR);
+      add(J['hand' + side], P.armR * fs);
+      add(J['hip' + side], P.legR);      add(J['knee' + side], P.legR);
+      add(J['foot' + side], P.legR * fs);
+    }
+    // 軀幹是圓角方塊：取內縮方塊的八個角再外擴圓角半徑
+    const rr = P.torsoR, hw = P.torsoW / 2 - rr, hd = P.torsoD / 2 - rr;
+    for (const x of [-hw, hw]) for (const y of [-hd, hd]) for (const z of [rr, P.torsoH - rr])
+      add(ap(J.Mwaist, [x, y, z]), rr);
+    return { minX, maxX, minY, maxY };
+  }
+
+  /**
+   * 算出把人偶推回畫面內所需的位移。
+   * 取景刻意不隨姿勢縮放（換動作時忽大忽小反而不好瞄準），
+   * 但骨盆固定在畫面 60% 高度處只適合站姿——整體前傾 180° 時身體往下長就會超出下緣。
+   * 因此保留固定比例，只在真的超出邊界時才平移，站姿等常見情形位移為 0、完全不動。
+   */
+  _clampOffset(v, J) {
+    const m = 4;                       // 邊界留白（像素）
+    v.ox = 0; v.oy = 0;
+    const b = this._figureBounds(v, J);
+    const fit = (lo, hi, size) => {
+      if (hi - lo > size - 2 * m) return (size - (lo + hi)) / 2;   // 裝不下就居中
+      if (lo < m) return m - lo;
+      if (hi > size - m) return size - m - hi;
+      return 0;
+    };
+    v.ox = fit(b.minX, b.maxX, v.w);
+    v.oy = fit(b.minY, b.maxY, v.h);
+  }
 
   /** 把世界座標的「方向向量」投影成畫面上的 2D 方向（px 是線性的，可直接套用） */
   _dir(v, d) { return [v.px(d) * v.scale, -d[2] * v.scale]; }
@@ -122,8 +174,8 @@ export class Editor2D {
 
   /** 由畫面座標反推 3D 位置，看不見的那一軸沿用 keep */
   _fromScreen(v, sx, sy, keep) {
-    const z = (v.cy - sy) / v.scale;
-    const a = (sx - v.cx) / v.scale;
+    const z = (v.cy + v.oy - sy) / v.scale;
+    const a = (sx - v.cx - v.ox) / v.scale;
     return v.id === 'front' ? [-a, keep[1], z] : [keep[0], a, z];
   }
 
@@ -152,6 +204,7 @@ export class Editor2D {
       if (this.drag && this.drag.v === v) {
         this.drag = null;
         v.cv.classList.remove('dragging');
+        this.draw();          // 拖曳中不重算邊界位移，放開後補畫一次
       }
     };
     v.cv.addEventListener('pointerup', end);
@@ -243,10 +296,12 @@ export class Editor2D {
 
     for (const v of this.views) {
       if (!v.w) continue;
+      // 拖曳中不重算位移，控制點才不會在手指底下滑掉
+      if (!this.drag) this._clampOffset(v, J);
       const g = v.ctx;
       g.clearRect(0, 0, v.w, v.h);
 
-      const gy = v.cy - groundZ * v.scale;
+      const gy = v.cy + v.oy - groundZ * v.scale;
       g.strokeStyle = COL.ground; g.lineWidth = 1;
       g.beginPath(); g.moveTo(6, gy); g.lineTo(v.w - 6, gy); g.stroke();
 
@@ -300,10 +355,10 @@ export class Editor2D {
       g.beginPath(); g.arc(hd[0], hd[1], P.headR * v.scale, 0, 7); g.fill(); g.stroke();
 
       // 重心垂線與落點
-      const cmx = v.cx + v.px(com) * v.scale;
+      const cmx = v.cx + v.ox + v.px(com) * v.scale;
       g.strokeStyle = stable ? COL.ok : COL.bad;
       g.setLineDash([3, 4]); g.lineWidth = 1;
-      g.beginPath(); g.moveTo(cmx, v.cy - com[2] * v.scale); g.lineTo(cmx, gy); g.stroke();
+      g.beginPath(); g.moveTo(cmx, v.cy + v.oy - com[2] * v.scale); g.lineTo(cmx, gy); g.stroke();
       g.setLineDash([]); g.lineWidth = 2;
       g.beginPath();
       g.moveTo(cmx - 6, gy - 6); g.lineTo(cmx + 6, gy + 6);
