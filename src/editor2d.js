@@ -46,10 +46,12 @@ export class Editor2D {
    * @param {HTMLCanvasElement} sideCanvas
    * @param {object} state  { pose, mirror }
    * @param {Function} onChange 姿勢變動後的回呼
+   * @param {Function} [onBeginDrag] 按下控制點、還沒動到姿勢前的回呼（供復原記錄用）
    */
-  constructor(frontCanvas, sideCanvas, state, onChange) {
+  constructor(frontCanvas, sideCanvas, state, onChange, onBeginDrag) {
     this.state = state;
     this.onChange = onChange;
+    this.onBeginDrag = onBeginDrag || (() => {});
     this.views = [
       { cv: frontCanvas, id: 'front', px: p => -p[0], depth: p => p[1] },
       { cv: sideCanvas, id: 'side', px: p => p[1], depth: p => p[0] }
@@ -134,6 +136,7 @@ export class Editor2D {
       const [x, y] = local(e);
       const h = this._pick(v, x, y);
       if (!h) return;
+      this.onBeginDrag();          // 先讓外部記下這一步之前的狀態
       this.drag = { v, h };
       v.cv.setPointerCapture(e.pointerId);
       v.cv.classList.add('dragging');

@@ -51,7 +51,7 @@
   button{font:inherit;font-size:13px;padding:6px 11px;border-radius:9px;
     border:1px solid var(--line);background:#fff;color:var(--ink);cursor:pointer}
   button:hover:not(:disabled){background:var(--accentSoft)}
-  button:disabled{opacity:.55;cursor:default}
+  button:disabled{opacity:.4;cursor:default}
   .chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
   .primary{background:var(--accent);border-color:var(--accent);color:#fff;
     font-weight:700;padding:9px 20px}
@@ -157,7 +157,9 @@
       <div id="sliders"></div>
       <div class="row" style="margin-top:8px">
         <label class="cb"><input type="checkbox" id="mirror"> 左右對稱</label>
-        <button id="btnReset" style="margin-left:auto">全部歸零</button>
+        <button id="btnUndo" style="margin-left:auto" title="復原（Ctrl+Z）">↶ 復原</button>
+        <button id="btnRedo" title="重做（Ctrl+Shift+Z）">↷ 重做</button>
+        <button id="btnReset">全部歸零</button>
       </div>
     </div>
     <div>
@@ -252,6 +254,6 @@
   }, 4000);
 })();
 </script>
-<script type="module" src="./src/main.js?v=2.4.0"></script>
+<script type="module" src="./src/main.js?v=2.5.0"></script>
 </body>
 </html>

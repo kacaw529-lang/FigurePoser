@@ -841,6 +841,79 @@ console.log('\n【UI 串接】')
         [...window.__poser.editor.highlight].join(','))
   ;[...$('presetRow').children].find(b => b.dataset.name.startsWith('06')).click()
   check('切回免支撐姿勢時虛線清空', window.__poser.editor.highlight.size === 0)
+}
+
+console.log('\n【復原／重做】')
+{
+  const $ = id => document.getElementById(id)
+  const H = window.__poser.history
+  const poseNow = () => JSON.parse($('code').value)
+  const clickPreset = n => [...$('presetRow').children].find(b => b.dataset.name.startsWith(n)).click()
+
+  H.undo.length = 0; H.redo.length = 0; H.tag = null
+  clickPreset('03')
+  const standing = poseNow()
+  clickPreset('08')
+  const spread = poseNow()
+  check('切換預設會被記錄', H.undo.length >= 1, `${H.undo.length} 步`)
+  window.__poser.undo()
+  check('復原回到上一個姿勢',
+        SK.KEYS.every(k => Math.abs(poseNow()[k] - standing[k]) < 0.5),
+        `rootPitch ${poseNow().rootPitch}`)
+  window.__poser.redo()
+  check('重做再回到後一個姿勢',
+        SK.KEYS.every(k => Math.abs(poseNow()[k] - spread[k]) < 0.5))
+
+  // 連續拉同一根滑桿應該只算一步，否則按一次復原只會退一格
+  H.undo.length = 0; H.redo.length = 0; H.tag = null
+  clickPreset('03')
+  H.undo.length = 0; H.redo.length = 0; H.tag = null
+  const sl = $('sliders').querySelector('input[data-k="rootPitch"]')
+  for (let v = 1; v <= 8; v++) {
+    sl.value = String(v)
+    sl.dispatchEvent(new window.Event('input', { bubbles: true }))
+  }
+  check('連續拉同一根滑桿只算一步', H.undo.length === 1, `${H.undo.length} 步`)
+  window.__poser.undo()
+  check('一次復原就退回拉之前', Math.abs(poseNow().rootPitch) < 0.5, `${poseNow().rootPitch}`)
+
+  // 不同滑桿要分開記
+  H.undo.length = 0; H.redo.length = 0; H.tag = null
+  for (const key of ['rootPitch', 'rootRoll', 'waistPitch']) {
+    const s2 = $('sliders').querySelector(`input[data-k="${key}"]`)
+    s2.value = '5'
+    s2.dispatchEvent(new window.Event('input', { bubbles: true }))
+  }
+  check('不同滑桿各記一步', H.undo.length === 3, `${H.undo.length} 步`)
+
+  // 新動作要清掉重做堆疊
+  window.__poser.undo()
+  check('復原後可以重做', H.redo.length === 1)
+  clickPreset('06')
+  check('做了新動作就清掉重做', H.redo.length === 0)
+
+  // 尺寸也要納入
+  H.undo.length = 0; H.redo.length = 0; H.tag = null
+  const hd = $('headDia')
+  const before = hd.value
+  hd.value = '20'; hd.dispatchEvent(new window.Event('input', { bubbles: true }))
+  window.__poser.undo()
+  check('頭部直徑也可以復原', hd.value === before, `${before} → 20 → ${hd.value}`)
+
+  // 按鈕狀態
+  H.undo.length = 0; H.redo.length = 0; H.tag = null
+  window.__poser.refresh()
+  clickPreset('03')
+  check('有紀錄時復原鈕可按', !$('btnUndo').disabled)
+  window.__poser.undo()
+  check('沒得重做前重做鈕停用', $('btnRedo').disabled === false)
+  while (H.undo.length) window.__poser.undo()
+  check('退到底時復原鈕停用', $('btnUndo').disabled)
+
+  // 上限
+  H.undo.length = 0; H.redo.length = 0
+  for (let i = 0; i < 80; i++) { H.tag = null; clickPreset(i % 2 ? '03' : '06') }
+  check('紀錄有上限不會無限膨脹', H.undo.length <= 60, `${H.undo.length} 步`)
 
   // 微調鈕：每根滑桿左右各一顆，按一下走一格
   {

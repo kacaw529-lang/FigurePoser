@@ -14,7 +14,7 @@ import { analysePrintability } from './printability.js';
  * 更新網站後若看不出變化，先確認這裡的號碼有沒有跟著變——
  * GitHub Pages 對 JS 檔會快取十分鐘，多半是瀏覽器還在用舊檔，按 Ctrl+Shift+R 即可。
  */
-const VERSION = 'v2.4.0';
+const VERSION = 'v2.5.0';
 
 const $ = id => document.getElementById(id);
 $('ver').textContent = VERSION;
@@ -35,13 +35,74 @@ if (fromURL) {
   state.presetName = null;
 }
 
+// ── 復原／重做 ───────────────────────────────────────────
+/**
+ * 以「動作」為單位記錄，而不是每一次狀態變動。
+ * 拖曳一次會產生數十次姿勢更新，若每次都存，按一下復原只會退回一個像素。
+ * 因此用 tag 把連續的同類操作歸為同一步：拖曳從按下到放開算一步，
+ * 拉滑桿、按住微調鈕連跳也各算一步；tag 不同或停手超過 GESTURE_MS 才開新的一步。
+ */
+const HISTORY_MAX = 60;
+const GESTURE_MS = 500;
+const history = { undo: [], redo: [], tag: null, at: 0 };
+
+const snapshot = () => ({
+  pose: { ...state.pose },
+  headDiameter: state.headDiameter,
+  baseDiameter: state.baseDiameter,
+  presetName: state.presetName
+});
+
+/** 在「即將改變狀態」之前呼叫，記下改變前的樣子 */
+function beginChange(tag) {
+  const now = Date.now();
+  if (history.tag === tag && now - history.at < GESTURE_MS) { history.at = now; return; }
+  history.undo.push(snapshot());
+  if (history.undo.length > HISTORY_MAX) history.undo.shift();
+  history.redo.length = 0;
+  history.tag = tag;
+  history.at = now;
+  syncHistoryButtons();
+}
+
+function applySnapshot(s) {
+  Object.assign(state.pose, s.pose);
+  state.headDiameter = s.headDiameter;
+  state.baseDiameter = s.baseDiameter;
+  state.presetName = s.presetName;
+  $('headDia').value = state.headDiameter;
+  $('baseDia').value = state.baseDiameter;
+  $('headDiaVal').textContent = state.headDiameter.toFixed(1) + ' mm';
+  $('baseDiaVal').textContent = state.baseDiameter ? state.baseDiameter + ' mm' : '不加';
+  markPreset(state.presetName);
+  viewer?.setBase(state.baseDiameter);
+  history.tag = null;               // 復原之後下一個動作一定要開新的一步
+  refresh(true);
+  syncHistoryButtons();
+}
+
+function undo() {
+  if (!history.undo.length) return;
+  history.redo.push(snapshot());
+  applySnapshot(history.undo.pop());
+}
+function redo() {
+  if (!history.redo.length) return;
+  history.undo.push(snapshot());
+  applySnapshot(history.redo.pop());
+}
+function syncHistoryButtons() {
+  $('btnUndo').disabled = history.undo.length === 0;
+  $('btnRedo').disabled = history.redo.length === 0;
+}
+
 // ── 建立元件 ─────────────────────────────────────────────
 // 拖曳過的姿勢就不再屬於任何預設動作，取消高亮並改用 custom 檔名
 const editor = new Editor2D($('cvFront'), $('cvSide'), state, () => {
   state.presetName = null;
   markPreset(null);
   refresh();
-});
+}, () => beginChange('drag'));
 
 // 3D 預覽需要 WebGL。老舊或停用硬體加速的電腦仍應能拖姿勢與匯出 STL，
 // 因此這裡失敗只降級，不中斷整個程式。
@@ -63,6 +124,7 @@ for (const name of Object.keys(PRESETS)) {
   b.textContent = name;
   b.dataset.name = name;
   b.onclick = () => {
+    beginChange('preset:' + name);
     state.pose = clonePose(PRESETS[name]);
     state.presetName = name;
     markPreset(name);
@@ -140,6 +202,7 @@ for (const [key, label, mn, mx] of SLIDERS) {
   slBox.appendChild(row);
   attachStepper(row.querySelector('input'));
   row.querySelector('input').addEventListener('input', e => {
+    beginChange('slider:' + key);
     state.pose[key] = +e.target.value;
     if (state.mirror && key === 'armTwistL') state.pose.armTwistR = state.pose.armTwistL;
     if (state.mirror && key === 'armTwistR') state.pose.armTwistL = state.pose.armTwistR;
@@ -159,12 +222,14 @@ function syncSliders() {
 [$('headDia'), $('baseDia')].forEach(attachStepper);
 
 $('headDia').addEventListener('input', e => {
+  beginChange('headDia');
   state.headDiameter = Math.max(HEAD_MIN, Math.min(HEAD_MAX, +e.target.value));
   $('headDiaVal').textContent = state.headDiameter.toFixed(1) + ' mm';
   viewer?.setBase(state.baseDiameter);
   refresh(true);
 });
 $('baseDia').addEventListener('input', e => {
+  beginChange('baseDia');
   state.baseDiameter = +e.target.value;
   $('baseDiaVal').textContent = state.baseDiameter ? state.baseDiameter + ' mm' : '不加';
   viewer?.setBase(state.baseDiameter);
@@ -173,11 +238,13 @@ $('baseDia').addEventListener('input', e => {
 
 // ── 其他控制 ─────────────────────────────────────────────
 $('mirror').addEventListener('change', e => {
+  if (e.target.checked) beginChange('mirror');
   state.mirror = e.target.checked;
   if (state.mirror) LR_KEYS.forEach(k => { state.pose[k + 'R'] = state.pose[k + 'L']; });
   refresh();
 });
 $('btnReset').onclick = () => {
+  beginChange('reset');
   state.pose = clonePose(null);
   state.presetName = null; markPreset(null);
   refresh(true);
@@ -202,6 +269,7 @@ window.addEventListener('hashchange', () => {
   if (window.location.hash === lastHash) return;     // 自己寫回去的，不用理
   const s = decodeState(window.location.hash);
   if (!s) return;
+  beginChange('hash');
   Object.assign(state, s);
   state.presetName = null;
   markPreset(null);
@@ -232,6 +300,7 @@ $('btnLoad').onclick = () => {
   const b = $('btnLoad');
   try {
     const j = JSON.parse($('code').value);
+    beginChange('load');
     KEYS.forEach(k => { if (typeof j[k] === 'number') state.pose[k] = j[k]; });
     state.presetName = null; markPreset(null);
     refresh(true);
@@ -340,6 +409,16 @@ function refresh(reframe = false) {
     : '重心偏出支撐範圍，列印後可能會倒（可加底座）';
 }
 
+$('btnUndo').onclick = undo;
+$('btnRedo').onclick = redo;
+window.addEventListener('keydown', e => {
+  if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'z') return;
+  const tag = (e.target && e.target.tagName) || '';
+  if (tag === 'INPUT' || tag === 'TEXTAREA') return;   // 讓輸入欄位保有自己的復原
+  e.preventDefault();
+  (e.shiftKey ? redo : undo)();
+});
+
 // ── 版面 ─────────────────────────────────────────────────
 function layout() {
   editor.resize();
@@ -351,10 +430,11 @@ window.addEventListener('resize', layout);
 $('headDiaVal').textContent = state.headDiameter.toFixed(1) + ' mm';
 $('headDia').value = state.headDiameter;
 markPreset(state.presetName);
+syncHistoryButtons();
 layout();
 viewer?.frame(headRadius());
 
 window.__poserReady = true;   // 供 index.html 的載入失敗偵測使用
 
 // 除錯與測試用的掛勾：在瀏覽器主控台可以直接檢視目前狀態
-window.__poser = { state, editor, viewer, refresh };
+window.__poser = { state, editor, viewer, refresh, history, undo, redo };
